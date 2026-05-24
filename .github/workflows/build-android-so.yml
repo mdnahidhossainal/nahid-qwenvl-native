@@ -83,5 +83,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5n_input_chunks_tokenize_probe_arm64_v8a
+          name: libnahid_qwenvl_stage5o_image_chunk_encode_probe_arm64_v8a
           path: artifact

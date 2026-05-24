@@ -77,7 +77,7 @@ static Fn load_fn(void *handle, const char *symbol, std::ostringstream &out, boo
 
 static std::string mtmd_init_from_file_probe() {
     std::ostringstream out;
-    out << "MTMD INIT-FROM-FILE PROBE — Stage 5N\n";
+    out << "MTMD INIT-FROM-FILE PROBE — Stage 5O\n";
     out << "This stage loads main GGUF, then calls only mtmd_context_params_default + mtmd_init_from_file.\n";
     out << "No screenshot bitmap, no mtmd_encode, no image inference is called.\n\n";
 
@@ -88,11 +88,11 @@ static std::string mtmd_init_from_file_probe() {
     out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n\n";
 
     if (!file_exists(g_main_model_path)) {
-        out << "STAGE5N_STOP: main GGUF not found ❌\n";
+        out << "STAGE5O_STOP: main GGUF not found ❌\n";
         return out.str();
     }
     if (!file_exists(g_mmproj_path)) {
-        out << "STAGE5N_STOP: mmproj GGUF not found ❌\n";
+        out << "STAGE5O_STOP: mmproj GGUF not found ❌\n";
         return out.str();
     }
 
@@ -118,7 +118,7 @@ static std::string mtmd_init_from_file_probe() {
     if (!p_llama_backend_init || !p_llama_backend_free || !p_llama_model_default_params ||
         !p_llama_model_load_from_file || !p_llama_model_free ||
         !p_mtmd_context_params_default || !p_mtmd_init_from_file || !p_mtmd_free) {
-        out << "\nSTAGE5N_STOP: required function pointer missing ❌\n";
+        out << "\nSTAGE5O_STOP: required function pointer missing ❌\n";
         return out.str();
     }
 
@@ -161,15 +161,15 @@ static std::string mtmd_init_from_file_probe() {
     p_llama_model_free(model);
     p_llama_backend_free();
 
-    out << "STAGE5N_MMPROJ_INIT_PROBE_OK ✅\n";
+    out << "STAGE5O_MMPROJ_INIT_PROBE_OK ✅\n";
     out << "NEXT_SAFE_STAGE: load screenshot bitmap with mtmd_helper_bitmap_init_from_file, then tokenize/evaluate chunks.\n";
     return out.str();
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv *env, jobject /*thiz*/) {
-    LOGI("nativePing Stage 5N called");
-    return make_jstring(env, "PONG_STAGE_5N: input chunks tokenize probe is available.");
+    LOGI("nativePing Stage 5O called");
+    return make_jstring(env, "PONG_STAGE_5O: image chunk encode probe is available.");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -184,11 +184,11 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_initialized = !g_main_model_path.empty() && !g_mmproj_path.empty();
 
     std::ostringstream out;
-    out << "INIT_STAGE_5N_INPUT_CHUNKS_TOKENIZE_PROBE\n";
+    out << "INIT_STAGE_5O_IMAGE_CHUNK_ENCODE_PROBE\n";
     out << "MAIN=" << g_main_model_path << "\n";
     out << "MMPROJ=" << g_mmproj_path << "\n\n";
     out << mtmd_init_from_file_probe();
-    out << "\nNOTE: Stage 5N does NOT run screenshot understanding yet. It only verifies mmproj projector init through libmtmd.\n";
+    out << "\nNOTE: Stage 5O does NOT run screenshot understanding yet. It only verifies mmproj projector init through libmtmd.\n";
 
     std::string result = out.str();
     LOGI("%s", result.c_str());
@@ -206,7 +206,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     std::string p = jstring_to_std(env, prompt);
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5N_INPUT_CHUNKS_TOKENIZE_PROBE\n";
+    out << "ANALYZE_STAGE_5O_IMAGE_CHUNK_ENCODE_PROBE\n";
     out << "This stage loads the saved screenshot bitmap, creates mtmd input chunks from prompt + bitmap,\n";
     out << "and prints chunk types/counts. No mtmd_encode, no llama_decode, no real final answer generation is called.\n\n";
     out << "IMAGE=" << image << "\n";
@@ -216,7 +216,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     out << "PROMPT_PREVIEW=" << p.substr(0, 220) << "\n\n";
 
     if (!file_exists(image)) {
-        out << "STAGE5N_STOP: screenshot image file not found ❌\n";
+        out << "STAGE5O_STOP: screenshot image file not found ❌\n";
         std::string result = out.str();
         LOGI("%s", result.c_str());
         return make_jstring(env, result);
@@ -229,7 +229,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     void *mtmd_h = safe_dlopen("libmtmd.so", out);
     (void)ggml; (void)ggml_base; (void)ggml_cpu;
 
-    out << "\nModel + bitmap + tokenize function pointers (Stage 5N):\n";
+    out << "\nModel + bitmap + tokenize function pointers (Stage 5O):\n";
     auto p_llama_backend_init = load_fn<decltype(&llama_backend_init)>(llama_h, "llama_backend_init", out);
     auto p_llama_backend_free = load_fn<decltype(&llama_backend_free)>(llama_h, "llama_backend_free", out);
     auto p_llama_model_default_params = load_fn<decltype(&llama_model_default_params)>(llama_h, "llama_model_default_params", out);
@@ -249,6 +249,8 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     using mtmd_input_chunks_get_fn = const mtmd_input_chunk * (*)(const mtmd_input_chunks *, size_t);
     using mtmd_input_chunks_free_fn = void (*)(mtmd_input_chunks *);
     using mtmd_tokenize_fn = int32_t (*)(mtmd_context *, mtmd_input_chunks *, const mtmd_input_text *, const mtmd_bitmap **, size_t);
+    using mtmd_encode_chunk_fn = int32_t (*)(mtmd_context *, const mtmd_input_chunk *);
+    using mtmd_get_output_embd_fn = float * (*)(mtmd_context *);
     using mtmd_input_chunk_get_type_fn = enum mtmd_input_chunk_type (*)(const mtmd_input_chunk *);
     using mtmd_input_chunk_get_n_tokens_fn = size_t (*)(const mtmd_input_chunk *);
     using mtmd_input_chunk_get_n_pos_fn = llama_pos (*)(const mtmd_input_chunk *);
@@ -265,6 +267,8 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     auto p_mtmd_input_chunks_get = load_fn<mtmd_input_chunks_get_fn>(mtmd_h, "mtmd_input_chunks_get", out);
     auto p_mtmd_input_chunks_free = load_fn<mtmd_input_chunks_free_fn>(mtmd_h, "mtmd_input_chunks_free", out);
     auto p_mtmd_tokenize = load_fn<mtmd_tokenize_fn>(mtmd_h, "mtmd_tokenize", out);
+    auto p_mtmd_encode_chunk = load_fn<mtmd_encode_chunk_fn>(mtmd_h, "mtmd_encode_chunk", out);
+    auto p_mtmd_get_output_embd = load_fn<mtmd_get_output_embd_fn>(mtmd_h, "mtmd_get_output_embd", out, false);
     auto p_mtmd_input_chunk_get_type = load_fn<mtmd_input_chunk_get_type_fn>(mtmd_h, "mtmd_input_chunk_get_type", out, false);
     auto p_mtmd_input_chunk_get_n_tokens = load_fn<mtmd_input_chunk_get_n_tokens_fn>(mtmd_h, "mtmd_input_chunk_get_n_tokens", out, false);
     auto p_mtmd_input_chunk_get_n_pos = load_fn<mtmd_input_chunk_get_n_pos_fn>(mtmd_h, "mtmd_input_chunk_get_n_pos", out, false);
@@ -275,8 +279,8 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
         !p_mtmd_context_params_default || !p_mtmd_init_from_file || !p_mtmd_free ||
         !p_mtmd_helper_bitmap_init_from_file || !p_mtmd_bitmap_free ||
         !p_mtmd_input_chunks_init || !p_mtmd_input_chunks_size || !p_mtmd_input_chunks_get ||
-        !p_mtmd_input_chunks_free || !p_mtmd_tokenize) {
-        out << "\nSTAGE5N_STOP: required function pointer missing ❌\n";
+        !p_mtmd_input_chunks_free || !p_mtmd_tokenize || !p_mtmd_encode_chunk || !p_mtmd_input_chunk_get_type) {
+        out << "\nSTAGE5O_STOP: required function pointer missing ❌\n";
         std::string result = out.str();
         LOGI("%s", result.c_str());
         return make_jstring(env, result);
@@ -410,6 +414,43 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
         out << "\n";
     }
 
+    out << "\nImage chunk encode probe:\n";
+    size_t image_chunks = 0;
+    size_t encode_ok = 0;
+    for (size_t i = 0; i < n_chunks; ++i) {
+        const mtmd_input_chunk *chunk = p_mtmd_input_chunks_get(chunks, i);
+        if (!chunk) continue;
+        enum mtmd_input_chunk_type t = p_mtmd_input_chunk_get_type(chunk);
+        if (t != MTMD_INPUT_CHUNK_TYPE_IMAGE) continue;
+        image_chunks++;
+        out << "Calling mtmd_encode_chunk on IMAGE chunk[" << i << "]...\n";
+        int32_t enc_rc = p_mtmd_encode_chunk(mctx, chunk);
+        out << "MTMD_ENCODE_CHUNK_RC=" << enc_rc << "\n";
+        if (enc_rc == 0) {
+            encode_ok++;
+            out << "MTMD_ENCODE_CHUNK_OK ✅\n";
+            if (p_mtmd_get_output_embd) {
+                float *embd = p_mtmd_get_output_embd(mctx);
+                out << "MTMD_OUTPUT_EMBD_PTR=" << embd << "\n";
+                if (embd) out << "MTMD_OUTPUT_EMBD_AVAILABLE ✅\n";
+                else out << "MTMD_OUTPUT_EMBD_NULL ⚠️\n";
+            }
+        } else {
+            out << "MTMD_ENCODE_CHUNK_FAILED ❌\n";
+        }
+        // Encode only the first image chunk in this probe to reduce memory/thermal risk.
+        break;
+    }
+    out << "IMAGE_CHUNKS_FOUND=" << image_chunks << "\n";
+    out << "IMAGE_CHUNKS_ENCODE_OK=" << encode_ok << "\n";
+    if (image_chunks > 0 && encode_ok > 0) {
+        out << "STAGE5O_IMAGE_CHUNK_ENCODE_PROBE_OK ✅\n";
+    } else if (image_chunks == 0) {
+        out << "STAGE5O_NO_IMAGE_CHUNK_FOUND ❌\n";
+    } else {
+        out << "STAGE5O_IMAGE_CHUNK_ENCODE_PROBE_FAILED ❌\n";
+    }
+
     out << "Freeing chunks, bitmap, mtmd context, and model immediately to keep RAM safe...\n";
     p_mtmd_input_chunks_free(chunks);
     p_mtmd_bitmap_free(bitmap);
@@ -417,8 +458,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     p_llama_model_free(model);
     p_llama_backend_free();
 
-    out << "STAGE5N_INPUT_CHUNKS_TOKENIZE_PROBE_OK ✅\n";
-    out << "NEXT_SAFE_STAGE: evaluate image chunks / mtmd_encode_chunk, then connect embeddings to llama decode.\n";
+    out << "NEXT_SAFE_STAGE: connect encoded image embeddings to llama decode and generate first screenshot answer.\n";
 
     std::string result = out.str();
     LOGI("%s", result.c_str());
@@ -427,7 +467,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    LOGI("nativeRelease Stage 5N called");
+    LOGI("nativeRelease Stage 5O called");
     g_main_model_path.clear();
     g_mmproj_path.clear();
     g_initialized = false;

@@ -1,0 +1,1 @@
+Stage 5O: safe mtmd image chunk encode probe. Loads main model, mmproj, screenshot bitmap, tokenizes prompt+image, then calls mtmd_encode_chunk on the image chunk only. No llama_decode/final answer yet.
