@@ -1,10 +1,29 @@
-# nahid-qwenvl-native
+# Nahid QwenVL Native Build Repo — Stage 5E-B
 
-GitHub Actions build package for Nahid AI native backend smoke-test library.
+Purpose:
+- Build Android arm64-v8a JNI wrapper `libnahid_qwenvl.so`.
+- Clone and build `llama.cpp` shared libraries for Android arm64-v8a in GitHub Actions.
+- Package wrapper + llama.cpp / ggml `.so` files in one artifact.
 
-This first stage builds a small ARM64 Android shared library named `libnahid_qwenvl.so`.
-It does not run Qwen-VL inference yet. It verifies that the Nahid AI Android app can load a prebuilt native library.
+This stage is a **shared-library/backend probe**, not final Qwen-VL inference.
 
-Output artifact:
-- `libnahid_qwenvl_arm64_v8a.zip`
-  - contains `libnahid_qwenvl.so`
+Expected artifact:
+`libnahid_qwenvl_llamacpp_arm64_v8a.zip`
+
+Expected inside:
+`arm64-v8a/libnahid_qwenvl.so`
+plus one or more llama/ggml libraries, such as:
+`arm64-v8a/libllama.so`
+`arm64-v8a/libggml.so`
+
+After copying all `.so` files into:
+`NahidAI/app/src/main/jniLibs/arm64-v8a/`
+
+The app test should show:
+- Native library loaded
+- INIT_OK
+- libllama.so LOAD_OK, if packaging and runtime loading are correct
+
+Next stage:
+- Real model load.
+- Real screenshot + prompt inference.

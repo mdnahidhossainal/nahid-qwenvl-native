@@ -1,45 +1,78 @@
 name: Build Android Native SO
 
 on:
-  workflow_dispatch:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+
     steps:
-      - name: Checkout
+      - name: Checkout build repo
         uses: actions/checkout@v4
 
-      - name: Set up Android SDK
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK/NDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK and CMake
+      - name: Install Android NDK
         run: |
-          sdkmanager "ndk;26.1.10909125" "cmake;3.22.1"
+          sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
 
-      - name: Configure CMake for arm64-v8a
+      - name: Clone llama.cpp
         run: |
-          mkdir -p build-arm64
-          cmake -S . -B build-arm64 \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_HOME/ndk/26.1.10909125/build/cmake/android.toolchain.cmake \
+          rm -rf third_party
+          mkdir -p third_party
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git third_party/llama.cpp
+
+      - name: Build llama.cpp shared libs for Android arm64-v8a
+        run: |
+          cmake -S third_party/llama.cpp -B build-llama-android \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-24 \
-            -DCMAKE_BUILD_TYPE=Release
+            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DGGML_OPENMP=OFF \
+            -DGGML_NATIVE=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=OFF \
+            -DLLAMA_CURL=OFF
+          cmake --build build-llama-android --config Release -j2
 
-      - name: Build .so
-        run: cmake --build build-arm64 --config Release -j2
-
-      - name: Prepare artifact
+      - name: Build Nahid JNI wrapper
         run: |
+          cmake -S . -B build-nahid-wrapper \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-nahid-wrapper --config Release -j2
+
+      - name: Collect SO files
+        run: |
+          rm -rf artifact
           mkdir -p artifact/arm64-v8a
-          cp build-arm64/libnahid_qwenvl.so artifact/arm64-v8a/libnahid_qwenvl.so
-          cd artifact
-          zip -r ../libnahid_qwenvl_arm64_v8a.zip arm64-v8a
+          cp build-nahid-wrapper/libnahid_qwenvl.so artifact/arm64-v8a/
+
+          # Collect llama.cpp / ggml shared libs from common output locations.
+          find build-llama-android -type f -name "*.so" -print -exec cp {} artifact/arm64-v8a/ \;
+
+          echo "---- artifact files ----"
+          find artifact -type f -maxdepth 3 -print -exec ls -lh {} \;
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_arm64_v8a
-          path: libnahid_qwenvl_arm64_v8a.zip
+          name: libnahid_qwenvl_llamacpp_arm64_v8a
+          path: artifact
+          if-no-files-found: error
