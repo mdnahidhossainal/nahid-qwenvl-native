@@ -77,7 +77,7 @@ static Fn load_fn(void *handle, const char *symbol, std::ostringstream &out, boo
 
 static std::string mtmd_init_from_file_probe() {
     std::ostringstream out;
-    out << "MTMD INIT-FROM-FILE PROBE — Stage 5K\n";
+    out << "MTMD INIT-FROM-FILE PROBE — Stage 5L\n";
     out << "This stage loads main GGUF, then calls only mtmd_context_params_default + mtmd_init_from_file.\n";
     out << "No screenshot bitmap, no mtmd_encode, no image inference is called.\n\n";
 
@@ -88,11 +88,11 @@ static std::string mtmd_init_from_file_probe() {
     out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n\n";
 
     if (!file_exists(g_main_model_path)) {
-        out << "STAGE5K_STOP: main GGUF not found ❌\n";
+        out << "STAGE5L_STOP: main GGUF not found ❌\n";
         return out.str();
     }
     if (!file_exists(g_mmproj_path)) {
-        out << "STAGE5K_STOP: mmproj GGUF not found ❌\n";
+        out << "STAGE5L_STOP: mmproj GGUF not found ❌\n";
         return out.str();
     }
 
@@ -118,7 +118,7 @@ static std::string mtmd_init_from_file_probe() {
     if (!p_llama_backend_init || !p_llama_backend_free || !p_llama_model_default_params ||
         !p_llama_model_load_from_file || !p_llama_model_free ||
         !p_mtmd_context_params_default || !p_mtmd_init_from_file || !p_mtmd_free) {
-        out << "\nSTAGE5K_STOP: required function pointer missing ❌\n";
+        out << "\nSTAGE5L_STOP: required function pointer missing ❌\n";
         return out.str();
     }
 
@@ -161,15 +161,15 @@ static std::string mtmd_init_from_file_probe() {
     p_llama_model_free(model);
     p_llama_backend_free();
 
-    out << "STAGE5K_MMPROJ_INIT_PROBE_OK ✅\n";
+    out << "STAGE5L_MMPROJ_INIT_PROBE_OK ✅\n";
     out << "NEXT_SAFE_STAGE: load screenshot bitmap with mtmd_helper_bitmap_init_from_file, then tokenize/evaluate chunks.\n";
     return out.str();
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv *env, jobject /*thiz*/) {
-    LOGI("nativePing Stage 5K called");
-    return make_jstring(env, "PONG_STAGE_5K: mtmd init-from-file probe is available.");
+    LOGI("nativePing Stage 5L called");
+    return make_jstring(env, "PONG_STAGE_5L: bitmap load probe is available.");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -184,11 +184,11 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_initialized = !g_main_model_path.empty() && !g_mmproj_path.empty();
 
     std::ostringstream out;
-    out << "INIT_STAGE_5K_MTMD_INIT_FROM_FILE_PROBE\n";
+    out << "INIT_STAGE_5L_BITMAP_LOAD_PROBE\n";
     out << "MAIN=" << g_main_model_path << "\n";
     out << "MMPROJ=" << g_mmproj_path << "\n\n";
     out << mtmd_init_from_file_probe();
-    out << "\nNOTE: Stage 5K does NOT run screenshot understanding yet. It only verifies mmproj projector init through libmtmd.\n";
+    out << "\nNOTE: Stage 5L does NOT run screenshot understanding yet. It only verifies mmproj projector init through libmtmd.\n";
 
     std::string result = out.str();
     LOGI("%s", result.c_str());
@@ -206,14 +206,67 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     std::string p = jstring_to_std(env, prompt);
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5K_PLACEHOLDER_NO_IMAGE_INFERENCE\n";
+    out << "ANALYZE_STAGE_5L_BITMAP_LOAD_PROBE\n";
+    out << "This stage loads the saved screenshot file using mtmd_helper_bitmap_init_from_file.\n";
+    out << "No mtmd_encode, no token evaluation, no real screenshot understanding is called.\n\n";
     out << "IMAGE=" << image << "\n";
     out << "IMAGE_EXISTS=" << (file_exists(image) ? "true" : "false") << "\n";
     out << "IMAGE_SIZE=" << file_size(image) << "\n";
     out << "MODEL_INITIALIZED_PATHS=" << (g_initialized ? "true" : "false") << "\n";
     out << "PROMPT_PREVIEW=" << p.substr(0, 220) << "\n\n";
-    out << "No real image inference is called in nativeAnalyze for Stage 5K.\n";
-    out << "If Init shows STAGE5K_MMPROJ_INIT_PROBE_OK, the next stage can safely try bitmap loading.\n";
+
+    if (!file_exists(image)) {
+        out << "STAGE5L_STOP: screenshot image file not found ❌\n";
+        std::string result = out.str();
+        LOGI("%s", result.c_str());
+        return make_jstring(env, result);
+    }
+
+    void *ggml = safe_dlopen("libggml.so", out);
+    void *ggml_base = safe_dlopen("libggml-base.so", out);
+    void *ggml_cpu = safe_dlopen("libggml-cpu.so", out);
+    void *llama_h = safe_dlopen("libllama.so", out);
+    void *mtmd_h = safe_dlopen("libmtmd.so", out);
+    (void)ggml; (void)ggml_base; (void)ggml_cpu; (void)llama_h;
+
+    out << "\nBitmap function pointers:\n";
+    auto p_mtmd_helper_bitmap_init_from_file = load_fn<decltype(&mtmd_helper_bitmap_init_from_file)>(mtmd_h, "mtmd_helper_bitmap_init_from_file", out);
+    auto p_mtmd_bitmap_free = load_fn<decltype(&mtmd_bitmap_free)>(mtmd_h, "mtmd_bitmap_free", out);
+    auto p_mtmd_bitmap_get_nx = load_fn<decltype(&mtmd_bitmap_get_nx)>(mtmd_h, "mtmd_bitmap_get_nx", out, false);
+    auto p_mtmd_bitmap_get_ny = load_fn<decltype(&mtmd_bitmap_get_ny)>(mtmd_h, "mtmd_bitmap_get_ny", out, false);
+    auto p_mtmd_bitmap_get_n_bytes = load_fn<decltype(&mtmd_bitmap_get_n_bytes)>(mtmd_h, "mtmd_bitmap_get_n_bytes", out, false);
+
+    if (!p_mtmd_helper_bitmap_init_from_file || !p_mtmd_bitmap_free) {
+        out << "\nSTAGE5L_STOP: required bitmap function pointer missing ❌\n";
+        std::string result = out.str();
+        LOGI("%s", result.c_str());
+        return make_jstring(env, result);
+    }
+
+    out << "\nCalling mtmd_helper_bitmap_init_from_file with saved screenshot...\n";
+    mtmd_bitmap *bitmap = p_mtmd_helper_bitmap_init_from_file(image.c_str());
+    if (!bitmap) {
+        out << "BITMAP_LOAD_FAILED ❌\n";
+        out << "Meaning: libmtmd is callable, but it could not decode this screenshot file.\n";
+        std::string result = out.str();
+        LOGI("%s", result.c_str());
+        return make_jstring(env, result);
+    }
+
+    out << "BITMAP_LOAD_OK ✅\n";
+    if (p_mtmd_bitmap_get_nx && p_mtmd_bitmap_get_ny) {
+        out << "BITMAP_WIDTH=" << p_mtmd_bitmap_get_nx(bitmap) << "\n";
+        out << "BITMAP_HEIGHT=" << p_mtmd_bitmap_get_ny(bitmap) << "\n";
+    }
+    if (p_mtmd_bitmap_get_n_bytes) {
+        out << "BITMAP_BYTES=" << p_mtmd_bitmap_get_n_bytes(bitmap) << "\n";
+    }
+
+    out << "Freeing bitmap immediately to keep RAM safe...\n";
+    p_mtmd_bitmap_free(bitmap);
+
+    out << "STAGE5L_BITMAP_LOAD_PROBE_OK ✅\n";
+    out << "NEXT_SAFE_STAGE: create mtmd input chunks from prompt + bitmap, without generation yet.\n";
 
     std::string result = out.str();
     LOGI("%s", result.c_str());
@@ -222,7 +275,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    LOGI("nativeRelease Stage 5K called");
+    LOGI("nativeRelease Stage 5L called");
     g_main_model_path.clear();
     g_mmproj_path.clear();
     g_initialized = false;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project(nahid_qwenvl_stage5k)
+project(nahid_qwenvl_stage5l)
 
 if(NOT LLAMA_CPP_DIR)
     message(FATAL_ERROR "LLAMA_CPP_DIR is required")
