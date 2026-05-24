@@ -1,10 +1,11 @@
-# Nahid QwenVL Native Build Repo — Stage 5F
+# Nahid QwenVL Native Build Repo — Stage 5G
 
-Stage 5F verifies that Android can load the real main GGUF using llama.cpp.
-It does not perform real screenshot/image inference yet.
+Stage 5G tests real llama.cpp text generation from the Android app.
+It does not perform screenshot/image inference yet.
 
-Expected output in the app:
-- libllama.so LOAD_OK
-- MODEL_LOAD_OK ✅ if qwen2.5-vl-3b-ui-grounding.q4_k_s.gguf can be loaded
+Expected app output:
+- MODEL_LOAD_OK ✅
+- CONTEXT_CREATE_OK ✅
+- TEXT_GENERATION_OK ✅
 
-If MODEL_LOAD_FAILED appears, the native package is working but the GGUF/runtime pairing needs adjustment.
+If this stage passes, the next stage can attach the vision projector / mmproj path for image understanding.

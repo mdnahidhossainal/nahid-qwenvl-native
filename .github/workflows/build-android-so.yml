@@ -32,7 +32,7 @@ jobs:
           rm -rf /tmp/llama.cpp
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
 
-      - name: Configure llama.cpp library-only Android build
+      - name: Configure llama.cpp Android library-only build
         run: |
           cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build-android \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
@@ -47,10 +47,9 @@ jobs:
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF
 
-      - name: Build exact llama.cpp shared library targets
+      - name: Build exact llama.cpp library targets
         run: |
           cmake --build /tmp/llama.cpp/build-android --config Release --target ggml ggml-base ggml-cpu llama -j2
-          echo "Available llama/ggml libs:"
           find /tmp/llama.cpp/build-android -name "*.so" -print
 
       - name: Locate llama.cpp shared libraries
@@ -68,7 +67,7 @@ jobs:
           test -n "$GGML_BASE_SO"
           test -n "$GGML_CPU_SO"
 
-      - name: Configure Nahid JNI wrapper Stage 5F model-load probe
+      - name: Configure Nahid JNI wrapper Stage 5G text-generation probe
         run: |
           cmake -S . -B build-nahid-wrapper \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
@@ -99,5 +98,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5f_model_load_probe_arm64_v8a
+          name: libnahid_qwenvl_stage5g_text_generation_probe_arm64_v8a
           path: artifact
