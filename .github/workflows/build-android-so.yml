@@ -47,27 +47,68 @@ jobs:
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF
 
-      - name: Build exact llama.cpp library targets
+      - name: Show available llama.cpp targets
+        run: |
+          cmake --build /tmp/llama.cpp/build-android --target help > /tmp/llama_targets.txt || true
+          echo "---- targets containing llama/ggml/mtmd/llava/clip ----"
+          grep -E "(^|[ /])(llama|ggml|mtmd|llava|clip)" /tmp/llama_targets.txt | head -n 200 || true
+
+      - name: Build core llama.cpp shared libraries
         run: |
           cmake --build /tmp/llama.cpp/build-android --config Release --target ggml ggml-base ggml-cpu llama -j2
           find /tmp/llama.cpp/build-android -name "*.so" -print
 
-      - name: Locate llama.cpp shared libraries
+      - name: Build multimodal shared library target if available
+        run: |
+          set -e
+          TARGETS="$(cat /tmp/llama_targets.txt || true)"
+          if echo "$TARGETS" | grep -qE '(^|[[:space:]])mtmd($|[[:space:]:])'; then
+            echo "MTMD_TARGET=mtmd" >> $GITHUB_ENV
+            cmake --build /tmp/llama.cpp/build-android --config Release --target mtmd -j2
+          elif echo "$TARGETS" | grep -qE '(^|[[:space:]])llava($|[[:space:]:])'; then
+            echo "MTMD_TARGET=llava" >> $GITHUB_ENV
+            cmake --build /tmp/llama.cpp/build-android --config Release --target llava -j2
+          elif echo "$TARGETS" | grep -qE '(^|[[:space:]])clip($|[[:space:]:])'; then
+            echo "MTMD_TARGET=clip" >> $GITHUB_ENV
+            cmake --build /tmp/llama.cpp/build-android --config Release --target clip -j2
+          else
+            echo "No known multimodal library target found. Available related targets:"
+            grep -E "(^|[ /])(mtmd|llava|clip|qwen|vision|image)" /tmp/llama_targets.txt | head -n 200 || true
+            exit 1
+          fi
+          echo "Built multimodal target: ${MTMD_TARGET}"
+          find /tmp/llama.cpp/build-android -name "*.so" -print
+
+      - name: Locate shared libraries
         run: |
           LLAMA_SO=$(find /tmp/llama.cpp/build-android -name "libllama.so" | head -n 1)
           GGML_SO=$(find /tmp/llama.cpp/build-android -name "libggml.so" | head -n 1)
           GGML_BASE_SO=$(find /tmp/llama.cpp/build-android -name "libggml-base.so" | head -n 1)
           GGML_CPU_SO=$(find /tmp/llama.cpp/build-android -name "libggml-cpu.so" | head -n 1)
+          MTMD_SO=$(find /tmp/llama.cpp/build-android -name "libmtmd.so" | head -n 1)
+          LLAVA_SO=$(find /tmp/llama.cpp/build-android -name "libllava.so" | head -n 1)
+          CLIP_SO=$(find /tmp/llama.cpp/build-android -name "libclip.so" | head -n 1)
           echo "LLAMA_SO=$LLAMA_SO" >> $GITHUB_ENV
           echo "GGML_SO=$GGML_SO" >> $GITHUB_ENV
           echo "GGML_BASE_SO=$GGML_BASE_SO" >> $GITHUB_ENV
           echo "GGML_CPU_SO=$GGML_CPU_SO" >> $GITHUB_ENV
+          echo "MTMD_SO=$MTMD_SO" >> $GITHUB_ENV
+          echo "LLAVA_SO=$LLAVA_SO" >> $GITHUB_ENV
+          echo "CLIP_SO=$CLIP_SO" >> $GITHUB_ENV
+          echo "LLAMA_SO=$LLAMA_SO"
+          echo "GGML_SO=$GGML_SO"
+          echo "GGML_BASE_SO=$GGML_BASE_SO"
+          echo "GGML_CPU_SO=$GGML_CPU_SO"
+          echo "MTMD_SO=$MTMD_SO"
+          echo "LLAVA_SO=$LLAVA_SO"
+          echo "CLIP_SO=$CLIP_SO"
           test -n "$LLAMA_SO"
           test -n "$GGML_SO"
           test -n "$GGML_BASE_SO"
           test -n "$GGML_CPU_SO"
+          test -n "$MTMD_SO$LLAVA_SO$CLIP_SO"
 
-      - name: Configure Nahid JNI wrapper Stage 5G text-generation probe
+      - name: Configure Nahid JNI wrapper Stage 5H multimodal library probe
         run: |
           cmake -S . -B build-nahid-wrapper \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
@@ -92,11 +133,14 @@ jobs:
           cp "$GGML_BASE_SO" artifact/arm64-v8a/libggml-base.so
           cp "$GGML_CPU_SO" artifact/arm64-v8a/libggml-cpu.so
           cp "$LLAMA_SO" artifact/arm64-v8a/libllama.so
+          if [ -n "$MTMD_SO" ]; then cp "$MTMD_SO" artifact/arm64-v8a/libmtmd.so; fi
+          if [ -n "$LLAVA_SO" ]; then cp "$LLAVA_SO" artifact/arm64-v8a/libllava.so; fi
+          if [ -n "$CLIP_SO" ]; then cp "$CLIP_SO" artifact/arm64-v8a/libclip.so; fi
           cp build-nahid-wrapper/libnahid_qwenvl.so artifact/arm64-v8a/libnahid_qwenvl.so
           ls -lah artifact/arm64-v8a
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5g_text_generation_probe_arm64_v8a
+          name: libnahid_qwenvl_stage5h_multimodal_library_probe_arm64_v8a
           path: artifact

@@ -1,11 +1,5 @@
-# Nahid QwenVL Native Build Repo — Stage 5G
+# Nahid QwenVL Native Build Repo — Stage 5H
 
-Stage 5G tests real llama.cpp text generation from the Android app.
-It does not perform screenshot/image inference yet.
+Stage 5H verifies whether the GitHub-built llama.cpp package includes a multimodal helper library (`libmtmd.so`, or fallback `libllava.so`/`libclip.so`) and whether Android can load it alongside `libllama.so`.
 
-Expected app output:
-- MODEL_LOAD_OK ✅
-- CONTEXT_CREATE_OK ✅
-- TEXT_GENERATION_OK ✅
-
-If this stage passes, the next stage can attach the vision projector / mmproj path for image understanding.
+This is still a probe stage: real screenshot/image inference comes after the multimodal library/API is confirmed.
