@@ -1,10 +1,10 @@
-# Nahid Qwen-VL Native Build Repo - Stage 5E-D
+# Nahid QwenVL Native Build Repo — Stage 5F
 
-This stage fixes Stage 5E-C by not building the default `all` target.
-It builds only llama.cpp library targets (`ggml`, `llama`) and avoids app/executable targets such as `llama-app` / `bin/llama` that caused `build-info.h` failures.
+Stage 5F verifies that Android can load the real main GGUF using llama.cpp.
+It does not perform real screenshot/image inference yet.
 
-Expected artifact:
-- `arm64-v8a/libnahid_qwenvl.so`
-- llama.cpp shared libraries such as `libllama.so`, `libggml*.so` if the library-only build succeeds.
+Expected output in the app:
+- libllama.so LOAD_OK
+- MODEL_LOAD_OK ✅ if qwen2.5-vl-3b-ui-grounding.q4_k_s.gguf can be loaded
 
-This is still a shared-library packaging/probe stage, not final Qwen2.5-VL inference.
+If MODEL_LOAD_FAILED appears, the native package is working but the GGUF/runtime pairing needs adjustment.

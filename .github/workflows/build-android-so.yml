@@ -2,13 +2,12 @@ name: Build Android Native SO
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout build repo
         uses: actions/checkout@v4
@@ -24,76 +23,81 @@ jobs:
 
       - name: Install Android NDK
         run: |
-          sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;26.1.10909125" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
 
       - name: Clone llama.cpp
         run: |
-          rm -rf third_party
-          mkdir -p third_party
-          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git third_party/llama.cpp
+          rm -rf /tmp/llama.cpp
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
 
-      - name: Configure llama.cpp Android shared libraries
+      - name: Configure llama.cpp library-only Android build
         run: |
-          cmake -S third_party/llama.cpp -B build-llama-android \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build-android \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=ON \
-            -DGGML_OPENMP=OFF \
-            -DGGML_NATIVE=OFF \
-            -DGGML_LLAMAFILE=OFF \
-            -DGGML_CUDA=OFF \
-            -DGGML_METAL=OFF \
-            -DGGML_VULKAN=OFF \
-            -DGGML_BLAS=OFF \
-            -DGGML_RPC=OFF \
-            -DGGML_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_APPS=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DLLAMA_BUILD_SERVER=OFF \
-            -DLLAMA_BUILD_TOOLS=OFF \
-            -DLLAMA_CURL=OFF
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_CURL=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF
 
-      - name: Show available native library targets
+      - name: Build exact llama.cpp shared library targets
         run: |
-          echo "---- Available targets containing ggml/llama ----"
-          cmake --build build-llama-android --target help | grep -E "(^| )([A-Za-z0-9_-]*)(ggml|llama)([A-Za-z0-9_-]*)" || true
+          cmake --build /tmp/llama.cpp/build-android --config Release --target ggml ggml-base ggml-cpu llama -j2
+          echo "Available llama/ggml libs:"
+          find /tmp/llama.cpp/build-android -name "*.so" -print
 
-      - name: Build only library targets, not apps
+      - name: Locate llama.cpp shared libraries
         run: |
-          set -e
-          echo "---- Building ggml and llama library targets only ----"
-          cmake --build build-llama-android --config Release --target ggml -j2
-          cmake --build build-llama-android --config Release --target llama -j2
-          echo "---- Built .so files ----"
-          find build-llama-android -type f -name "*.so" -print -exec ls -lh {} \;
+          LLAMA_SO=$(find /tmp/llama.cpp/build-android -name "libllama.so" | head -n 1)
+          GGML_SO=$(find /tmp/llama.cpp/build-android -name "libggml.so" | head -n 1)
+          GGML_BASE_SO=$(find /tmp/llama.cpp/build-android -name "libggml-base.so" | head -n 1)
+          GGML_CPU_SO=$(find /tmp/llama.cpp/build-android -name "libggml-cpu.so" | head -n 1)
+          echo "LLAMA_SO=$LLAMA_SO" >> $GITHUB_ENV
+          echo "GGML_SO=$GGML_SO" >> $GITHUB_ENV
+          echo "GGML_BASE_SO=$GGML_BASE_SO" >> $GITHUB_ENV
+          echo "GGML_CPU_SO=$GGML_CPU_SO" >> $GITHUB_ENV
+          test -n "$LLAMA_SO"
+          test -n "$GGML_SO"
+          test -n "$GGML_BASE_SO"
+          test -n "$GGML_CPU_SO"
+
+      - name: Configure Nahid JNI wrapper Stage 5F model-load probe
+        run: |
+          cmake -S . -B build-nahid-wrapper \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLAMA_CPP_DIR=/tmp/llama.cpp \
+            -DLLAMA_SO="$LLAMA_SO" \
+            -DGGML_SO="$GGML_SO" \
+            -DGGML_BASE_SO="$GGML_BASE_SO" \
+            -DGGML_CPU_SO="$GGML_CPU_SO"
 
       - name: Build Nahid JNI wrapper
         run: |
-          cmake -S . -B build-nahid-wrapper \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-26 \
-            -DCMAKE_BUILD_TYPE=Release
           cmake --build build-nahid-wrapper --config Release -j2
 
       - name: Collect SO files
         run: |
-          rm -rf artifact
+          rm -rf artifact/arm64-v8a
           mkdir -p artifact/arm64-v8a
-          cp build-nahid-wrapper/libnahid_qwenvl.so artifact/arm64-v8a/
-          find build-llama-android -type f -name "*.so" -print -exec cp {} artifact/arm64-v8a/ \;
-          echo "---- artifact files ----"
-          find artifact -type f -maxdepth 3 -print -exec ls -lh {} \;
-          echo "---- count ----"
-          find artifact/arm64-v8a -type f -name "*.so" | wc -l
-          test $(find artifact/arm64-v8a -type f -name "*.so" | wc -l) -ge 2
+          cp "$GGML_SO" artifact/arm64-v8a/libggml.so
+          cp "$GGML_BASE_SO" artifact/arm64-v8a/libggml-base.so
+          cp "$GGML_CPU_SO" artifact/arm64-v8a/libggml-cpu.so
+          cp "$LLAMA_SO" artifact/arm64-v8a/libllama.so
+          cp build-nahid-wrapper/libnahid_qwenvl.so artifact/arm64-v8a/libnahid_qwenvl.so
+          ls -lah artifact/arm64-v8a
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_llamacpp_arm64_v8a_stage5e_d
+          name: libnahid_qwenvl_stage5f_model_load_probe_arm64_v8a
           path: artifact
-          if-no-files-found: error

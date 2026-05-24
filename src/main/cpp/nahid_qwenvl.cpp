@@ -1,121 +1,121 @@
 #include <jni.h>
 #include <string>
 #include <sstream>
-#include <android/log.h>
-#include <dlfcn.h>
 #include <sys/stat.h>
+#include <android/log.h>
+#include "llama.h"
 
 #define LOG_TAG "NahidQwenVL"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-static std::string g_main_model_path;
-static std::string g_mmproj_path;
-
-static bool file_exists(const std::string& path) {
+static bool file_exists(const std::string & path) {
     struct stat st{};
-    return !path.empty() && stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+    return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 }
 
-static std::string jstr_to_utf8(JNIEnv* env, jstring value) {
-    if (!value) return "";
-    const char* chars = env->GetStringUTFChars(value, nullptr);
-    if (!chars) return "";
-    std::string out(chars);
-    env->ReleaseStringUTFChars(value, chars);
+static long long file_size(const std::string & path) {
+    struct stat st{};
+    if (stat(path.c_str(), &st) != 0) return -1;
+    return static_cast<long long>(st.st_size);
+}
+
+static std::string jstr(JNIEnv * env, jstring s) {
+    if (!s) return "";
+    const char * c = env->GetStringUTFChars(s, nullptr);
+    std::string out = c ? c : "";
+    if (c) env->ReleaseStringUTFChars(s, c);
     return out;
 }
 
-static jstring to_jstring(JNIEnv* env, const std::string& value) {
-    return env->NewStringUTF(value.c_str());
+static jstring to_jstring(JNIEnv * env, const std::string & s) {
+    return env->NewStringUTF(s.c_str());
 }
 
-static std::string probe_shared_lib(const char* lib_name) {
-    void* handle = dlopen(lib_name, RTLD_NOW | RTLD_LOCAL);
-    if (!handle) {
-        const char* err = dlerror();
-        std::ostringstream ss;
-        ss << "LOAD_FAIL: " << lib_name << " -> " << (err ? err : "unknown dlopen error");
-        return ss.str();
-    }
-
-    // We only probe symbols here. Real inference will be connected in the next stage.
-    void* backend_init = dlsym(handle, "llama_backend_init");
-    void* model_load = dlsym(handle, "llama_model_load_from_file");
-
-    std::ostringstream ss;
-    ss << "LOAD_OK: " << lib_name;
-    ss << "\nllama_backend_init symbol: " << (backend_init ? "FOUND" : "NOT_FOUND");
-    ss << "\nllama_model_load_from_file symbol: " << (model_load ? "FOUND" : "NOT_FOUND");
-
-    dlclose(handle);
-    return ss.str();
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv * env, jobject /*thiz*/) {
+    std::ostringstream out;
+    out << "PONG_STAGE_5F_MODEL_LOAD_PROBE" << "\n";
+    out << "llama.cpp linked: yes" << "\n";
+    out << "Purpose: verify real GGUF model load path before multimodal image inference.";
+    return to_jstring(env, out.str());
 }
 
-extern "C"
-JNIEXPORT jstring JNICALL
-Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(
-        JNIEnv* env,
-        jobject /* thiz */) {
-    std::string result =
-            "PONG_OK: libnahid_qwenvl.so loaded and JNI callable.\n"
-            "Stage: 5E-C llama.cpp library-only shared probe wrapper.\n"
-            "Note: this is not final Qwen-VL inference yet.";
-    return to_jstring(env, result);
-}
-
-extern "C"
-JNIEXPORT jstring JNICALL
+extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
-        JNIEnv* env,
-        jobject /* thiz */,
+        JNIEnv * env,
+        jobject /*thiz*/,
         jstring mainModelPath,
         jstring mmprojPath) {
 
-    g_main_model_path = jstr_to_utf8(env, mainModelPath);
-    g_mmproj_path = jstr_to_utf8(env, mmprojPath);
+    const std::string main_path = jstr(env, mainModelPath);
+    const std::string mmproj_path = jstr(env, mmprojPath);
 
-    std::ostringstream ss;
-    ss << "INIT_OK: Stage 5E-C native wrapper initialized\n";
-    ss << "MAIN=" << g_main_model_path << "\n";
-    ss << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
-    ss << "MMPROJ=" << g_mmproj_path << "\n";
-    ss << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n\n";
+    std::ostringstream out;
+    out << "INIT_STAGE_5F_MODEL_LOAD_PROBE" << "\n";
+    out << "MAIN=" << main_path << "\n";
+    out << "MAIN_EXISTS=" << (file_exists(main_path) ? "true" : "false") << "\n";
+    out << "MAIN_SIZE=" << file_size(main_path) << "\n";
+    out << "MMPROJ=" << mmproj_path << "\n";
+    out << "MMPROJ_EXISTS=" << (file_exists(mmproj_path) ? "true" : "false") << "\n";
+    out << "MMPROJ_SIZE=" << file_size(mmproj_path) << "\n\n";
 
-    ss << "llama.cpp shared library probe:\n";
-    ss << probe_shared_lib("libllama.so") << "\n\n";
+    if (!file_exists(main_path)) {
+        out << "MODEL_LOAD_SKIPPED: main GGUF file not found";
+        return to_jstring(env, out.str());
+    }
 
-    ss << "ggml shared library probe:\n";
-    ss << probe_shared_lib("libggml.so") << "\n\n";
+    if (!file_exists(mmproj_path)) {
+        out << "WARNING: mmproj file not found. Text model-load probe can continue, but image inference will need mmproj." << "\n";
+    }
 
-    ss << "NOTE: If libllama.so LOAD_OK appears, app packaging can load llama.cpp native backend.\n";
-    ss << "NEXT: Stage 5E-C will replace this probe with real model load + image prompt inference.";
-    LOGI("%s", ss.str().c_str());
-    return to_jstring(env, ss.str());
+    out << "Calling llama_backend_init..." << "\n";
+    llama_backend_init();
+
+    llama_model_params params = llama_model_default_params();
+    params.n_gpu_layers = 0; // CPU-safe Android probe
+
+    out << "Calling llama_model_load_from_file..." << "\n";
+    llama_model * model = llama_model_load_from_file(main_path.c_str(), params);
+    if (model == nullptr) {
+        out << "MODEL_LOAD_FAILED ❌" << "\n";
+        out << "Meaning: libllama is loaded, but this GGUF could not be opened as a llama.cpp model on Android." << "\n";
+        out << "Next fix may need a newer llama.cpp revision or a different GGUF export." << "\n";
+        llama_backend_free();
+        return to_jstring(env, out.str());
+    }
+
+    out << "MODEL_LOAD_OK ✅" << "\n";
+    out << "The main GGUF can be loaded by llama.cpp on Android." << "\n";
+    out << "This stage intentionally frees the model immediately to avoid keeping RAM busy." << "\n";
+    out << "NEXT: Stage 5G will keep a context and add prompt generation; Stage 5H will attach image/mmproj." << "\n";
+
+    llama_model_free(model);
+    llama_backend_free();
+    return to_jstring(env, out.str());
 }
 
-extern "C"
-JNIEXPORT jstring JNICALL
+extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
-        JNIEnv* env,
-        jobject /* thiz */,
+        JNIEnv * env,
+        jobject /*thiz*/,
         jstring imagePath,
         jstring prompt) {
+    const std::string image_path = jstr(env, imagePath);
+    const std::string prompt_text = jstr(env, prompt);
 
-    std::string img = jstr_to_utf8(env, imagePath);
-    std::string prm = jstr_to_utf8(env, prompt);
+    std::ostringstream out;
+    out << "ANALYZE_STAGE_5F_NOT_REAL_IMAGE_INFERENCE_YET" << "\n";
+    out << "IMAGE=" << image_path << "\n";
+    out << "IMAGE_EXISTS=" << (file_exists(image_path) ? "true" : "false") << "\n";
+    out << "IMAGE_SIZE=" << file_size(image_path) << "\n";
+    out << "PROMPT_PREVIEW=" << prompt_text.substr(0, 220) << "\n\n";
+    out << "Stage 5F result: native bridge + llama.cpp model-load path is being tested in nativeInit." << "\n";
+    out << "Real screenshot understanding is not enabled in this .so yet.";
+    return to_jstring(env, out.str());
+}
 
-    std::ostringstream ss;
-    ss << "ANALYZE_PROBE_OK: JNI -> prebuilt wrapper -> llama.cpp probe path working\n";
-    ss << "IMAGE=" << img << "\n";
-    ss << "IMAGE_EXISTS=" << (file_exists(img) ? "true" : "false") << "\n";
-    ss << "PROMPT_PREVIEW=" << prm.substr(0, 240) << "\n\n";
-
-    ss << "Runtime library check:\n";
-    ss << probe_shared_lib("libllama.so") << "\n\n";
-
-    ss << "NOTE: This Stage 5E-C only verifies that llama.cpp shared libs are packaged and loadable.\n";
-    ss << "Real Qwen2.5-VL image understanding will be added after this test passes.";
-    LOGI("%s", ss.str().c_str());
-    return to_jstring(env, ss.str());
+extern "C" JNIEXPORT void JNICALL
+Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
+    // Stage 5F does not keep a persistent model/context yet.
 }
