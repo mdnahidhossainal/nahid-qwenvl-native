@@ -59,7 +59,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(
         jobject /* thiz */) {
     std::string result =
             "PONG_OK: libnahid_qwenvl.so loaded and JNI callable.\n"
-            "Stage: 5E-B llama.cpp shared-library probe wrapper.\n"
+            "Stage: 5E-C llama.cpp library-only shared probe wrapper.\n"
             "Note: this is not final Qwen-VL inference yet.";
     return to_jstring(env, result);
 }
@@ -76,7 +76,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_mmproj_path = jstr_to_utf8(env, mmprojPath);
 
     std::ostringstream ss;
-    ss << "INIT_OK: Stage 5E-B native wrapper initialized\n";
+    ss << "INIT_OK: Stage 5E-C native wrapper initialized\n";
     ss << "MAIN=" << g_main_model_path << "\n";
     ss << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
     ss << "MMPROJ=" << g_mmproj_path << "\n";
@@ -114,7 +114,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     ss << "Runtime library check:\n";
     ss << probe_shared_lib("libllama.so") << "\n\n";
 
-    ss << "NOTE: This Stage 5E-B only verifies that llama.cpp shared libs are packaged and loadable.\n";
+    ss << "NOTE: This Stage 5E-C only verifies that llama.cpp shared libs are packaged and loadable.\n";
     ss << "Real Qwen2.5-VL image understanding will be added after this test passes.";
     LOGI("%s", ss.str().c_str());
     return to_jstring(env, ss.str());

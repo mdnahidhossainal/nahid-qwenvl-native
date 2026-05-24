@@ -33,7 +33,7 @@ jobs:
           mkdir -p third_party
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git third_party/llama.cpp
 
-      - name: Build llama.cpp shared libs for Android arm64-v8a
+      - name: Configure llama.cpp library-only Android build
         run: |
           cmake -S third_party/llama.cpp -B build-llama-android \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
@@ -43,11 +43,29 @@ jobs:
             -DBUILD_SHARED_LIBS=ON \
             -DGGML_OPENMP=OFF \
             -DGGML_NATIVE=OFF \
-            -DLLAMA_BUILD_TESTS=OFF \
+            -DGGML_LLAMAFILE=OFF \
+            -DGGML_CUDA=OFF \
+            -DGGML_METAL=OFF \
+            -DGGML_VULKAN=OFF \
+            -DGGML_BLAS=OFF \
+            -DGGML_RPC=OFF \
+            -DGGML_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_APPS=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_BUILD_SERVER=OFF \
+            -DLLAMA_BUILD_TOOLS=OFF \
             -DLLAMA_CURL=OFF
+
+      - name: Build only llama.cpp shared-library targets
+        run: |
+          set -e
+          echo "---- Available llama.cpp targets mentioning llama/ggml ----"
+          cmake --build build-llama-android --target help | grep -E "(llama|ggml)" || true
+          echo "---- Build shared libs only ----"
           cmake --build build-llama-android --config Release -j2
+          echo "---- Built .so files ----"
+          find build-llama-android -type f -name "*.so" -print -exec ls -lh {} \;
 
       - name: Build Nahid JNI wrapper
         run: |
@@ -63,16 +81,15 @@ jobs:
           rm -rf artifact
           mkdir -p artifact/arm64-v8a
           cp build-nahid-wrapper/libnahid_qwenvl.so artifact/arm64-v8a/
-
-          # Collect llama.cpp / ggml shared libs from common output locations.
           find build-llama-android -type f -name "*.so" -print -exec cp {} artifact/arm64-v8a/ \;
-
           echo "---- artifact files ----"
           find artifact -type f -maxdepth 3 -print -exec ls -lh {} \;
+          echo "---- count ----"
+          find artifact/arm64-v8a -type f -name "*.so" | wc -l
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_llamacpp_arm64_v8a
+          name: libnahid_qwenvl_llamacpp_arm64_v8a_stage5e_c
           path: artifact
           if-no-files-found: error
