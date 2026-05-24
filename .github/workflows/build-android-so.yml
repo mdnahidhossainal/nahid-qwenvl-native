@@ -2,93 +2,70 @@ name: Build Android Native SO
 
 on:
   push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build-android-arm64:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Nahid wrapper repo
+      - name: Checkout build repo
         uses: actions/checkout@v4
 
-      - name: Install Android NDK
-        uses: nttld/setup-ndk@v1
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
-          ndk-version: r26d
-          add-to-path: true
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK/NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;26.1.10909125" "cmake;3.22.1"
 
       - name: Clone llama.cpp
         run: |
-          rm -rf external/llama.cpp
-          mkdir -p external
-          git clone --depth 1 https://github.com/ggml-org/llama.cpp external/llama.cpp
+          rm -rf llama.cpp
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
 
-      - name: Configure llama.cpp Android shared libraries only
+      - name: Build llama.cpp shared libs for Android arm64
         run: |
-          mkdir -p build-llama-android
-          cmake -S external/llama.cpp -B build-llama-android \
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125"
+          cmake -S llama.cpp -B llama-build \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=ON \
-            -DLLAMA_BUILD_APPS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_CURL=OFF \
-            -DGGML_OPENMP=OFF
-
-      - name: List build targets
-        run: |
-          cmake --build build-llama-android --target help | tee build_targets.txt || true
-
-      - name: Build llama/ggml shared targets only
-        run: |
-          cmake --build build-llama-android --target ggml --config Release -j2 || true
-          cmake --build build-llama-android --target ggml-base --config Release -j2 || true
-          cmake --build build-llama-android --target ggml-cpu --config Release -j2 || true
-          cmake --build build-llama-android --target llama --config Release -j2 || true
-          cmake --build build-llama-android --target mtmd --config Release -j2 || true
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=OFF \
+            -DGGML_OPENMP=OFF \
+            -DGGML_NATIVE=OFF
+          cmake --build llama-build --config Release -j2
 
       - name: Build Nahid JNI wrapper
         run: |
-          mkdir -p build-wrapper
-          cmake -S . -B build-wrapper \
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125"
+          cmake -S . -B nahid-build \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLLAMA_BUILD_DIR="$GITHUB_WORKSPACE/build-llama-android"
-          cmake --build build-wrapper --config Release -j2
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build nahid-build --config Release -j2
 
-      - name: Collect shared libraries and exported symbols
+      - name: Collect SO files
         run: |
           mkdir -p artifact/arm64-v8a
-          find build-llama-android -name "*.so" -print -exec cp -f {} artifact/arm64-v8a/ \;
-          find build-wrapper -name "libnahid_qwenvl.so" -print -exec cp -f {} artifact/arm64-v8a/ \;
-
-          echo "=== Artifact SO files ===" | tee artifact/README_SYMBOLS.txt
-          find artifact/arm64-v8a -maxdepth 1 -type f -name "*.so" -printf "%f %s bytes\n" | sort | tee -a artifact/README_SYMBOLS.txt
-
-          echo "=== libmtmd exported dynamic symbols: llvm-nm ===" | tee artifact/mtmd_symbols_nm.txt
-          if [ -f artifact/arm64-v8a/libmtmd.so ]; then
-            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D --defined-only artifact/arm64-v8a/libmtmd.so | sort | tee -a artifact/mtmd_symbols_nm.txt || true
-            echo "=== readelf libmtmd symbols ===" | tee artifact/mtmd_symbols_readelf.txt
-            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -Ws artifact/arm64-v8a/libmtmd.so | sort | tee -a artifact/mtmd_symbols_readelf.txt || true
-          else
-            echo "libmtmd.so not built/found" | tee -a artifact/mtmd_symbols_nm.txt
-          fi
-
-          echo "=== libllama exported symbols related to multimodal/mtmd/image ===" | tee artifact/libllama_symbol_probe.txt
-          if [ -f artifact/arm64-v8a/libllama.so ]; then
-            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D --defined-only artifact/arm64-v8a/libllama.so | grep -Ei "mtmd|clip|image|vision|mmproj|llava|qwen" | sort | tee -a artifact/libllama_symbol_probe.txt || true
-          else
-            echo "libllama.so not built/found" | tee -a artifact/libllama_symbol_probe.txt
-          fi
+          find llama-build -name "libggml*.so" -exec cp -v {} artifact/arm64-v8a/ \;
+          find llama-build -name "libllama.so" -exec cp -v {} artifact/arm64-v8a/ \;
+          find llama-build -name "libmtmd.so" -exec cp -v {} artifact/arm64-v8a/ \;
+          cp -v nahid-build/libnahid_qwenvl.so artifact/arm64-v8a/
+          ls -lh artifact/arm64-v8a
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5i_mtmd_symbol_dump_arm64_v8a
+          name: libnahid_qwenvl_stage5j_handle_mtmd_symbol_probe_arm64_v8a
           path: artifact
