@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 #include <dlfcn.h>
 #include <android/log.h>
+#include "llama.h"
+#include "mtmd.h"
 
 #define LOG_TAG "NahidQwenVL"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -28,7 +30,7 @@ static jstring make_jstring(JNIEnv *env, const std::string &value) {
 
 static bool file_exists(const std::string &path) {
     struct stat st{};
-    return !path.empty() && stat(path.c_str(), &st) == 0;
+    return !path.empty() && stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 }
 
 static long long file_size(const std::string &path) {
@@ -53,118 +55,121 @@ static void *safe_dlopen(const char *name, std::ostringstream &out) {
     return h;
 }
 
-static bool check_symbol(void *handle, const char *symbol, std::ostringstream &out) {
+template <typename Fn>
+static Fn load_fn(void *handle, const char *symbol, std::ostringstream &out, bool required = true) {
     if (!handle) {
         out << symbol << ": SKIPPED_HANDLE_NULL\n";
-        return false;
+        return nullptr;
     }
     dlerror();
     void *ptr = dlsym(handle, symbol);
     const char *err = dlerror();
     if (ptr && !err) {
         out << symbol << ": FOUND\n";
-        return true;
+        return reinterpret_cast<Fn>(ptr);
     }
     out << symbol << ": NOT_FOUND";
     if (err) out << " :: " << err;
+    if (required) out << "  ❌";
     out << "\n";
-    return false;
+    return nullptr;
 }
 
-static std::string mtmd_handle_probe_report() {
+static std::string mtmd_init_from_file_probe() {
     std::ostringstream out;
-    out << "MTMD HANDLE-BASED SYMBOL PROBE — Stage 5J\n";
-    out << "This stage uses dlopen(\"libmtmd.so\") handle directly, not RTLD_DEFAULT.\n";
-    out << "No mtmd init, no image encode, no mmproj inference call is made.\n\n";
+    out << "MTMD INIT-FROM-FILE PROBE — Stage 5K\n";
+    out << "This stage loads main GGUF, then calls only mtmd_context_params_default + mtmd_init_from_file.\n";
+    out << "No screenshot bitmap, no mtmd_encode, no image inference is called.\n\n";
+
+    out << "File checks:\n";
+    out << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
+    out << "MAIN_SIZE=" << file_size(g_main_model_path) << "\n";
+    out << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n";
+    out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n\n";
+
+    if (!file_exists(g_main_model_path)) {
+        out << "STAGE5K_STOP: main GGUF not found ❌\n";
+        return out.str();
+    }
+    if (!file_exists(g_mmproj_path)) {
+        out << "STAGE5K_STOP: mmproj GGUF not found ❌\n";
+        return out.str();
+    }
 
     void *ggml = safe_dlopen("libggml.so", out);
     void *ggml_base = safe_dlopen("libggml-base.so", out);
     void *ggml_cpu = safe_dlopen("libggml-cpu.so", out);
-    void *llama = safe_dlopen("libllama.so", out);
-    void *mtmd = safe_dlopen("libmtmd.so", out);
+    void *llama_h = safe_dlopen("libllama.so", out);
+    void *mtmd_h = safe_dlopen("libmtmd.so", out);
+    (void)ggml; (void)ggml_base; (void)ggml_cpu;
 
-    out << "\nlibllama symbol checks:\n";
-    int llama_found = 0;
-    const char *llama_symbols[] = {
-        "llama_backend_init",
-        "llama_model_load_from_file",
-        "llama_model_free",
-        "llama_init_from_model",
-        "llama_free",
-        "llama_tokenize",
-        "llama_decode"
-    };
-    for (const char *s : llama_symbols) {
-        if (check_symbol(llama, s, out)) llama_found++;
+    out << "\nRequired function pointers:\n";
+    auto p_llama_backend_init = load_fn<decltype(&llama_backend_init)>(llama_h, "llama_backend_init", out);
+    auto p_llama_backend_free = load_fn<decltype(&llama_backend_free)>(llama_h, "llama_backend_free", out);
+    auto p_llama_model_default_params = load_fn<decltype(&llama_model_default_params)>(llama_h, "llama_model_default_params", out);
+    auto p_llama_model_load_from_file = load_fn<decltype(&llama_model_load_from_file)>(llama_h, "llama_model_load_from_file", out);
+    auto p_llama_model_free = load_fn<decltype(&llama_model_free)>(llama_h, "llama_model_free", out);
+
+    auto p_mtmd_context_params_default = load_fn<decltype(&mtmd_context_params_default)>(mtmd_h, "mtmd_context_params_default", out);
+    auto p_mtmd_init_from_file = load_fn<decltype(&mtmd_init_from_file)>(mtmd_h, "mtmd_init_from_file", out);
+    auto p_mtmd_free = load_fn<decltype(&mtmd_free)>(mtmd_h, "mtmd_free", out);
+    auto p_mtmd_support_vision = load_fn<decltype(&mtmd_support_vision)>(mtmd_h, "mtmd_support_vision", out, false);
+
+    if (!p_llama_backend_init || !p_llama_backend_free || !p_llama_model_default_params ||
+        !p_llama_model_load_from_file || !p_llama_model_free ||
+        !p_mtmd_context_params_default || !p_mtmd_init_from_file || !p_mtmd_free) {
+        out << "\nSTAGE5K_STOP: required function pointer missing ❌\n";
+        return out.str();
     }
 
-    out << "\nlibmtmd required symbol checks:\n";
-    int mtmd_required_found = 0;
-    const char *mtmd_required[] = {
-        "mtmd_context_params_default",
-        "mtmd_init_from_file",
-        "mtmd_free",
-        "mtmd_tokenize",
-        "mtmd_encode",
-        "mtmd_helper_bitmap_init_from_file",
-        "mtmd_helper_eval_chunks",
-        "mtmd_bitmap_free",
-        "mtmd_input_chunks_init",
-        "mtmd_input_chunks_size",
-        "mtmd_input_chunks_get",
-        "mtmd_input_chunks_free"
-    };
-    const int mtmd_required_total = sizeof(mtmd_required) / sizeof(mtmd_required[0]);
-    for (const char *s : mtmd_required) {
-        if (check_symbol(mtmd, s, out)) mtmd_required_found++;
+    out << "\nCalling llama_backend_init...\n";
+    p_llama_backend_init();
+
+    llama_model_params model_params = p_llama_model_default_params();
+    model_params.n_gpu_layers = 0;
+
+    out << "Calling llama_model_load_from_file...\n";
+    llama_model *model = p_llama_model_load_from_file(g_main_model_path.c_str(), model_params);
+    if (!model) {
+        out << "MODEL_LOAD_FAILED ❌\n";
+        p_llama_backend_free();
+        return out.str();
+    }
+    out << "MODEL_LOAD_OK ✅\n";
+
+    out << "Calling mtmd_context_params_default...\n";
+    mtmd_context_params mtmd_params = p_mtmd_context_params_default();
+
+    out << "Calling mtmd_init_from_file with mmproj + loaded llama_model...\n";
+    mtmd_context *mctx = p_mtmd_init_from_file(g_mmproj_path.c_str(), model, mtmd_params);
+    if (!mctx) {
+        out << "MTMD_INIT_FROM_FILE_FAILED ❌\n";
+        out << "Meaning: libmtmd is callable, but projector init failed for this mmproj/model combo or runtime config.\n";
+        p_llama_model_free(model);
+        p_llama_backend_free();
+        return out.str();
     }
 
-    out << "\nlibmtmd extra useful symbol checks:\n";
-    const char *mtmd_extra[] = {
-        "mtmd_support_vision",
-        "mtmd_support_audio",
-        "mtmd_get_output_embd",
-        "mtmd_encode_chunk",
-        "mtmd_helper_get_n_tokens",
-        "mtmd_helper_get_n_pos",
-        "mtmd_helper_image_get_decoder_pos",
-        "mtmd_helper_decode_image_chunk",
-        "mtmd_helper_eval_chunk_single",
-        "mtmd_helper_bitmap_init_from_buf",
-        "mtmd_bitmap_get_nx",
-        "mtmd_bitmap_get_ny",
-        "mtmd_bitmap_get_n_bytes"
-    };
-    for (const char *s : mtmd_extra) {
-        check_symbol(mtmd, s, out);
+    out << "MTMD_INIT_FROM_FILE_OK ✅\n";
+    if (p_mtmd_support_vision) {
+        bool vision = p_mtmd_support_vision(mctx);
+        out << "MTMD_SUPPORT_VISION=" << (vision ? "true ✅" : "false ⚠️") << "\n";
     }
 
-    out << "\nProbe summary:\n";
-    out << "llama symbols found: " << llama_found << "/" << (sizeof(llama_symbols) / sizeof(llama_symbols[0])) << "\n";
-    out << "mtmd required symbols found: " << mtmd_required_found << "/" << mtmd_required_total << "\n";
+    out << "Freeing mtmd context and llama model immediately to keep RAM safe...\n";
+    p_mtmd_free(mctx);
+    p_llama_model_free(model);
+    p_llama_backend_free();
 
-    if (mtmd && mtmd_required_found == mtmd_required_total) {
-        out << "MTMD_HANDLE_SYMBOL_PROBE_OK ✅\n";
-        out << "NEXT_SAFE_STAGE: call mtmd_context_params_default + mtmd_init_from_file only, with crash guard logs.\n";
-    } else if (mtmd) {
-        out << "MTMD_HANDLE_SYMBOL_PROBE_PARTIAL ⚠️\n";
-        out << "libmtmd.so opened, but not all expected API symbols were found through handle dlsym.\n";
-    } else {
-        out << "MTMD_HANDLE_SYMBOL_PROBE_FAIL ❌\n";
-        out << "libmtmd.so could not be opened from Android runtime.\n";
-    }
-
-    // Keep handles open. Closing can be risky if dependent libraries are still referenced by the runtime.
-    (void)ggml;
-    (void)ggml_base;
-    (void)ggml_cpu;
+    out << "STAGE5K_MMPROJ_INIT_PROBE_OK ✅\n";
+    out << "NEXT_SAFE_STAGE: load screenshot bitmap with mtmd_helper_bitmap_init_from_file, then tokenize/evaluate chunks.\n";
     return out.str();
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv *env, jobject /*thiz*/) {
-    LOGI("nativePing Stage 5J called");
-    return make_jstring(env, "PONG_STAGE_5J: libnahid_qwenvl.so loaded. Handle-based mtmd symbol probe is available.");
+    LOGI("nativePing Stage 5K called");
+    return make_jstring(env, "PONG_STAGE_5K: mtmd init-from-file probe is available.");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -179,15 +184,11 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_initialized = !g_main_model_path.empty() && !g_mmproj_path.empty();
 
     std::ostringstream out;
-    out << "INIT_STAGE_5J_HANDLE_BASED_MTMD_SYMBOL_PROBE\n";
+    out << "INIT_STAGE_5K_MTMD_INIT_FROM_FILE_PROBE\n";
     out << "MAIN=" << g_main_model_path << "\n";
-    out << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
-    out << "MAIN_SIZE=" << file_size(g_main_model_path) << "\n";
-    out << "MMPROJ=" << g_mmproj_path << "\n";
-    out << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n";
-    out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n\n";
-    out << mtmd_handle_probe_report();
-    out << "\nNOTE: Stage 5J does NOT run real screenshot/mmproj inference. It only proves Android runtime can find mtmd API symbols safely.\n";
+    out << "MMPROJ=" << g_mmproj_path << "\n\n";
+    out << mtmd_init_from_file_probe();
+    out << "\nNOTE: Stage 5K does NOT run screenshot understanding yet. It only verifies mmproj projector init through libmtmd.\n";
 
     std::string result = out.str();
     LOGI("%s", result.c_str());
@@ -205,14 +206,14 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     std::string p = jstring_to_std(env, prompt);
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5J_HANDLE_SYMBOL_PROBE_PLACEHOLDER\n";
+    out << "ANALYZE_STAGE_5K_PLACEHOLDER_NO_IMAGE_INFERENCE\n";
     out << "IMAGE=" << image << "\n";
     out << "IMAGE_EXISTS=" << (file_exists(image) ? "true" : "false") << "\n";
     out << "IMAGE_SIZE=" << file_size(image) << "\n";
     out << "MODEL_INITIALIZED_PATHS=" << (g_initialized ? "true" : "false") << "\n";
     out << "PROMPT_PREVIEW=" << p.substr(0, 220) << "\n\n";
-    out << "No real image inference is called in nativeAnalyze for Stage 5J.\n";
-    out << "If Init shows MTMD_HANDLE_SYMBOL_PROBE_OK, the next stage can safely try mtmd_init_from_file.\n";
+    out << "No real image inference is called in nativeAnalyze for Stage 5K.\n";
+    out << "If Init shows STAGE5K_MMPROJ_INIT_PROBE_OK, the next stage can safely try bitmap loading.\n";
 
     std::string result = out.str();
     LOGI("%s", result.c_str());
@@ -221,7 +222,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    LOGI("nativeRelease Stage 5J called");
+    LOGI("nativeRelease Stage 5K called");
     g_main_model_path.clear();
     g_mmproj_path.clear();
     g_initialized = false;

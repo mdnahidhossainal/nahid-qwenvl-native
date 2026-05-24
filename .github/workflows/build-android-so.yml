@@ -66,7 +66,8 @@ jobs:
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DLLAMA_BUILD_DIR="$GITHUB_WORKSPACE/build-llama-android"
+            -DLLAMA_BUILD_DIR="$GITHUB_WORKSPACE/build-llama-android" \
+            -DLLAMA_CPP_DIR="$GITHUB_WORKSPACE/external/llama.cpp"
           cmake --build build-wrapper --config Release -j2
 
       - name: Collect SO files
@@ -82,5 +83,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5j_b_handle_mtmd_symbol_probe_arm64_v8a
+          name: libnahid_qwenvl_stage5k_mtmd_init_from_file_probe_arm64_v8a
           path: artifact
