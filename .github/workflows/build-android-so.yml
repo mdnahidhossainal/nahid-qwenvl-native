@@ -61,13 +61,27 @@ jobs:
       - name: Build Nahid JNI wrapper
         run: |
           mkdir -p build-wrapper
+          LLAMA_SO=$(find "$GITHUB_WORKSPACE/build-llama-android" -name libllama.so | head -1)
+          MTMD_SO=$(find "$GITHUB_WORKSPACE/build-llama-android" -name libmtmd.so | head -1)
+          GGML_SO=$(find "$GITHUB_WORKSPACE/build-llama-android" -name libggml.so | head -1)
+          GGML_BASE_SO=$(find "$GITHUB_WORKSPACE/build-llama-android" -name libggml-base.so | head -1)
+          GGML_CPU_SO=$(find "$GITHUB_WORKSPACE/build-llama-android" -name libggml-cpu.so | head -1)
+          echo "LLAMA_SO=$LLAMA_SO"
+          echo "MTMD_SO=$MTMD_SO"
+          echo "GGML_SO=$GGML_SO"
+          echo "GGML_BASE_SO=$GGML_BASE_SO"
+          echo "GGML_CPU_SO=$GGML_CPU_SO"
           cmake -S . -B build-wrapper \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DLLAMA_BUILD_DIR="$GITHUB_WORKSPACE/build-llama-android" \
-            -DLLAMA_CPP_DIR="$GITHUB_WORKSPACE/external/llama.cpp"
+            -DLLAMA_CPP_DIR="$GITHUB_WORKSPACE/external/llama.cpp" \
+            -DLLAMA_SO="$LLAMA_SO" \
+            -DMTMD_SO="$MTMD_SO" \
+            -DGGML_SO="$GGML_SO" \
+            -DGGML_BASE_SO="$GGML_BASE_SO" \
+            -DGGML_CPU_SO="$GGML_CPU_SO"
           cmake --build build-wrapper --config Release -j2
 
       - name: Collect SO files
@@ -83,5 +97,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5o_image_chunk_encode_probe_arm64_v8a
+          name: libnahid_qwenvl_stage5p_first_decode_generation_probe_arm64_v8a
           path: artifact

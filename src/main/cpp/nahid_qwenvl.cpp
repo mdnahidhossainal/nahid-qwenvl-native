@@ -5,12 +5,12 @@
 #include <sys/stat.h>
 #include <dlfcn.h>
 #include <android/log.h>
+#include <cstring>
 #include "llama.h"
 #include "mtmd.h"
 
 #define LOG_TAG "NahidQwenVL"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static std::string g_main_model_path;
 static std::string g_mmproj_path;
@@ -47,11 +47,8 @@ static std::string safe_dlerror() {
 static void *safe_dlopen(const char *name, std::ostringstream &out) {
     dlerror();
     void *h = dlopen(name, RTLD_NOW | RTLD_LOCAL);
-    if (h) {
-        out << "DL_OPEN_OK: " << name << "\n";
-    } else {
-        out << "DL_OPEN_FAIL: " << name << " :: " << safe_dlerror() << "\n";
-    }
+    if (h) out << "DL_OPEN_OK: " << name << "\n";
+    else out << "DL_OPEN_FAIL: " << name << " :: " << safe_dlerror() << "\n";
     return h;
 }
 
@@ -75,101 +72,22 @@ static Fn load_fn(void *handle, const char *symbol, std::ostringstream &out, boo
     return nullptr;
 }
 
-static std::string mtmd_init_from_file_probe() {
-    std::ostringstream out;
-    out << "MTMD INIT-FROM-FILE PROBE — Stage 5O\n";
-    out << "This stage loads main GGUF, then calls only mtmd_context_params_default + mtmd_init_from_file.\n";
-    out << "No screenshot bitmap, no mtmd_encode, no image inference is called.\n\n";
-
-    out << "File checks:\n";
-    out << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
-    out << "MAIN_SIZE=" << file_size(g_main_model_path) << "\n";
-    out << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n";
-    out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n\n";
-
-    if (!file_exists(g_main_model_path)) {
-        out << "STAGE5O_STOP: main GGUF not found ❌\n";
-        return out.str();
+static std::string token_to_piece_safe(const llama_vocab * vocab, llama_token token) {
+    std::string piece;
+    piece.resize(96);
+    int n = llama_token_to_piece(vocab, token, piece.data(), (int) piece.size(), 0, true);
+    if (n < 0) {
+        piece.resize((size_t)(-n));
+        n = llama_token_to_piece(vocab, token, piece.data(), (int) piece.size(), 0, true);
     }
-    if (!file_exists(g_mmproj_path)) {
-        out << "STAGE5O_STOP: mmproj GGUF not found ❌\n";
-        return out.str();
-    }
-
-    void *ggml = safe_dlopen("libggml.so", out);
-    void *ggml_base = safe_dlopen("libggml-base.so", out);
-    void *ggml_cpu = safe_dlopen("libggml-cpu.so", out);
-    void *llama_h = safe_dlopen("libllama.so", out);
-    void *mtmd_h = safe_dlopen("libmtmd.so", out);
-    (void)ggml; (void)ggml_base; (void)ggml_cpu;
-
-    out << "\nRequired function pointers:\n";
-    auto p_llama_backend_init = load_fn<decltype(&llama_backend_init)>(llama_h, "llama_backend_init", out);
-    auto p_llama_backend_free = load_fn<decltype(&llama_backend_free)>(llama_h, "llama_backend_free", out);
-    auto p_llama_model_default_params = load_fn<decltype(&llama_model_default_params)>(llama_h, "llama_model_default_params", out);
-    auto p_llama_model_load_from_file = load_fn<decltype(&llama_model_load_from_file)>(llama_h, "llama_model_load_from_file", out);
-    auto p_llama_model_free = load_fn<decltype(&llama_model_free)>(llama_h, "llama_model_free", out);
-
-    auto p_mtmd_context_params_default = load_fn<decltype(&mtmd_context_params_default)>(mtmd_h, "mtmd_context_params_default", out);
-    auto p_mtmd_init_from_file = load_fn<decltype(&mtmd_init_from_file)>(mtmd_h, "mtmd_init_from_file", out);
-    auto p_mtmd_free = load_fn<decltype(&mtmd_free)>(mtmd_h, "mtmd_free", out);
-    auto p_mtmd_support_vision = load_fn<decltype(&mtmd_support_vision)>(mtmd_h, "mtmd_support_vision", out, false);
-
-    if (!p_llama_backend_init || !p_llama_backend_free || !p_llama_model_default_params ||
-        !p_llama_model_load_from_file || !p_llama_model_free ||
-        !p_mtmd_context_params_default || !p_mtmd_init_from_file || !p_mtmd_free) {
-        out << "\nSTAGE5O_STOP: required function pointer missing ❌\n";
-        return out.str();
-    }
-
-    out << "\nCalling llama_backend_init...\n";
-    p_llama_backend_init();
-
-    llama_model_params model_params = p_llama_model_default_params();
-    model_params.n_gpu_layers = 0;
-
-    out << "Calling llama_model_load_from_file...\n";
-    llama_model *model = p_llama_model_load_from_file(g_main_model_path.c_str(), model_params);
-    if (!model) {
-        out << "MODEL_LOAD_FAILED ❌\n";
-        p_llama_backend_free();
-        return out.str();
-    }
-    out << "MODEL_LOAD_OK ✅\n";
-
-    out << "Calling mtmd_context_params_default...\n";
-    mtmd_context_params mtmd_params = p_mtmd_context_params_default();
-
-    out << "Calling mtmd_init_from_file with mmproj + loaded llama_model...\n";
-    mtmd_context *mctx = p_mtmd_init_from_file(g_mmproj_path.c_str(), model, mtmd_params);
-    if (!mctx) {
-        out << "MTMD_INIT_FROM_FILE_FAILED ❌\n";
-        out << "Meaning: libmtmd is callable, but projector init failed for this mmproj/model combo or runtime config.\n";
-        p_llama_model_free(model);
-        p_llama_backend_free();
-        return out.str();
-    }
-
-    out << "MTMD_INIT_FROM_FILE_OK ✅\n";
-    if (p_mtmd_support_vision) {
-        bool vision = p_mtmd_support_vision(mctx);
-        out << "MTMD_SUPPORT_VISION=" << (vision ? "true ✅" : "false ⚠️") << "\n";
-    }
-
-    out << "Freeing mtmd context and llama model immediately to keep RAM safe...\n";
-    p_mtmd_free(mctx);
-    p_llama_model_free(model);
-    p_llama_backend_free();
-
-    out << "STAGE5O_MMPROJ_INIT_PROBE_OK ✅\n";
-    out << "NEXT_SAFE_STAGE: load screenshot bitmap with mtmd_helper_bitmap_init_from_file, then tokenize/evaluate chunks.\n";
-    return out.str();
+    if (n <= 0) return "";
+    piece.resize((size_t)n);
+    return piece;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv *env, jobject /*thiz*/) {
-    LOGI("nativePing Stage 5O called");
-    return make_jstring(env, "PONG_STAGE_5O: image chunk encode probe is available.");
+    return make_jstring(env, "PONG_STAGE_5P: first decode/generation probe available.");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -184,15 +102,15 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_initialized = !g_main_model_path.empty() && !g_mmproj_path.empty();
 
     std::ostringstream out;
-    out << "INIT_STAGE_5O_IMAGE_CHUNK_ENCODE_PROBE\n";
+    out << "INIT_STAGE_5P_FIRST_DECODE_GENERATION_PROBE\n";
     out << "MAIN=" << g_main_model_path << "\n";
-    out << "MMPROJ=" << g_mmproj_path << "\n\n";
-    out << mtmd_init_from_file_probe();
-    out << "\nNOTE: Stage 5O does NOT run screenshot understanding yet. It only verifies mmproj projector init through libmtmd.\n";
-
-    std::string result = out.str();
-    LOGI("%s", result.c_str());
-    return make_jstring(env, result);
+    out << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
+    out << "MAIN_SIZE=" << file_size(g_main_model_path) << "\n";
+    out << "MMPROJ=" << g_mmproj_path << "\n";
+    out << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n";
+    out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n";
+    out << "Stage 5P init only checks paths. Real decode probe runs inside nativeAnalyze.\n";
+    return make_jstring(env, out.str());
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -206,20 +124,21 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     std::string p = jstring_to_std(env, prompt);
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5O_IMAGE_CHUNK_ENCODE_PROBE\n";
-    out << "This stage loads the saved screenshot bitmap, creates mtmd input chunks from prompt + bitmap,\n";
-    out << "and prints chunk types/counts. No mtmd_encode, no llama_decode, no real final answer generation is called.\n\n";
+    out << "ANALYZE_STAGE_5P_FIRST_DECODE_GENERATION_PROBE\n";
+    out << "Goal: evaluate TEXT + IMAGE chunks into llama context and try short generation.\n";
+    out << "This is the first real screenshot-answer attempt; if it fails, the logs show exact stage.\n\n";
     out << "IMAGE=" << image << "\n";
     out << "IMAGE_EXISTS=" << (file_exists(image) ? "true" : "false") << "\n";
     out << "IMAGE_SIZE=" << file_size(image) << "\n";
-    out << "MODEL_INITIALIZED_PATHS=" << (g_initialized ? "true" : "false") << "\n";
+    out << "MAIN=" << g_main_model_path << "\n";
+    out << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
+    out << "MMPROJ=" << g_mmproj_path << "\n";
+    out << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n";
     out << "PROMPT_PREVIEW=" << p.substr(0, 220) << "\n\n";
 
-    if (!file_exists(image)) {
-        out << "STAGE5O_STOP: screenshot image file not found ❌\n";
-        std::string result = out.str();
-        LOGI("%s", result.c_str());
-        return make_jstring(env, result);
+    if (!file_exists(image) || !file_exists(g_main_model_path) || !file_exists(g_mmproj_path)) {
+        out << "STAGE5P_STOP: required file missing ❌\n";
+        return make_jstring(env, out.str());
     }
 
     void *ggml = safe_dlopen("libggml.so", out);
@@ -229,20 +148,27 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     void *mtmd_h = safe_dlopen("libmtmd.so", out);
     (void)ggml; (void)ggml_base; (void)ggml_cpu;
 
-    out << "\nModel + bitmap + tokenize function pointers (Stage 5O):\n";
+    out << "\nFunction pointers (Stage 5P):\n";
     auto p_llama_backend_init = load_fn<decltype(&llama_backend_init)>(llama_h, "llama_backend_init", out);
     auto p_llama_backend_free = load_fn<decltype(&llama_backend_free)>(llama_h, "llama_backend_free", out);
     auto p_llama_model_default_params = load_fn<decltype(&llama_model_default_params)>(llama_h, "llama_model_default_params", out);
     auto p_llama_model_load_from_file = load_fn<decltype(&llama_model_load_from_file)>(llama_h, "llama_model_load_from_file", out);
     auto p_llama_model_free = load_fn<decltype(&llama_model_free)>(llama_h, "llama_model_free", out);
+    auto p_llama_context_default_params = load_fn<decltype(&llama_context_default_params)>(llama_h, "llama_context_default_params", out);
+    auto p_llama_init_from_model = load_fn<decltype(&llama_init_from_model)>(llama_h, "llama_init_from_model", out);
+    auto p_llama_free = load_fn<decltype(&llama_free)>(llama_h, "llama_free", out);
+    auto p_llama_model_get_vocab = load_fn<decltype(&llama_model_get_vocab)>(llama_h, "llama_model_get_vocab", out);
+    auto p_llama_model_n_embd = load_fn<decltype(&llama_model_n_embd)>(llama_h, "llama_model_n_embd", out);
+    auto p_llama_batch_init = load_fn<decltype(&llama_batch_init)>(llama_h, "llama_batch_init", out);
+    auto p_llama_batch_free = load_fn<decltype(&llama_batch_free)>(llama_h, "llama_batch_free", out);
+    auto p_llama_decode = load_fn<decltype(&llama_decode)>(llama_h, "llama_decode", out);
+    auto p_llama_tokenize = load_fn<decltype(&llama_tokenize)>(llama_h, "llama_tokenize", out, false);
+
     auto p_mtmd_context_params_default = load_fn<decltype(&mtmd_context_params_default)>(mtmd_h, "mtmd_context_params_default", out);
     auto p_mtmd_init_from_file = load_fn<decltype(&mtmd_init_from_file)>(mtmd_h, "mtmd_init_from_file", out);
     auto p_mtmd_free = load_fn<decltype(&mtmd_free)>(mtmd_h, "mtmd_free", out);
-
     using mtmd_helper_bitmap_init_from_file_fn = mtmd_bitmap * (*)(mtmd_context *, const char *);
     using mtmd_bitmap_free_fn = void (*)(mtmd_bitmap *);
-    using mtmd_bitmap_get_u32_fn = uint32_t (*)(const mtmd_bitmap *);
-    using mtmd_bitmap_get_size_fn = size_t (*)(const mtmd_bitmap *);
     using mtmd_default_marker_fn = const char * (*)();
     using mtmd_input_chunks_init_fn = mtmd_input_chunks * (*)();
     using mtmd_input_chunks_size_fn = size_t (*)(const mtmd_input_chunks *);
@@ -252,15 +178,12 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     using mtmd_encode_chunk_fn = int32_t (*)(mtmd_context *, const mtmd_input_chunk *);
     using mtmd_get_output_embd_fn = float * (*)(mtmd_context *);
     using mtmd_input_chunk_get_type_fn = enum mtmd_input_chunk_type (*)(const mtmd_input_chunk *);
+    using mtmd_input_chunk_get_tokens_text_fn = const llama_token * (*)(const mtmd_input_chunk *, size_t *);
     using mtmd_input_chunk_get_n_tokens_fn = size_t (*)(const mtmd_input_chunk *);
     using mtmd_input_chunk_get_n_pos_fn = llama_pos (*)(const mtmd_input_chunk *);
-    using mtmd_input_chunk_get_id_fn = const char * (*)(const mtmd_input_chunk *);
 
     auto p_mtmd_helper_bitmap_init_from_file = load_fn<mtmd_helper_bitmap_init_from_file_fn>(mtmd_h, "mtmd_helper_bitmap_init_from_file", out);
     auto p_mtmd_bitmap_free = load_fn<mtmd_bitmap_free_fn>(mtmd_h, "mtmd_bitmap_free", out);
-    auto p_mtmd_bitmap_get_nx = load_fn<mtmd_bitmap_get_u32_fn>(mtmd_h, "mtmd_bitmap_get_nx", out, false);
-    auto p_mtmd_bitmap_get_ny = load_fn<mtmd_bitmap_get_u32_fn>(mtmd_h, "mtmd_bitmap_get_ny", out, false);
-    auto p_mtmd_bitmap_get_n_bytes = load_fn<mtmd_bitmap_get_size_fn>(mtmd_h, "mtmd_bitmap_get_n_bytes", out, false);
     auto p_mtmd_default_marker = load_fn<mtmd_default_marker_fn>(mtmd_h, "mtmd_default_marker", out, false);
     auto p_mtmd_input_chunks_init = load_fn<mtmd_input_chunks_init_fn>(mtmd_h, "mtmd_input_chunks_init", out);
     auto p_mtmd_input_chunks_size = load_fn<mtmd_input_chunks_size_fn>(mtmd_h, "mtmd_input_chunks_size", out);
@@ -268,25 +191,26 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     auto p_mtmd_input_chunks_free = load_fn<mtmd_input_chunks_free_fn>(mtmd_h, "mtmd_input_chunks_free", out);
     auto p_mtmd_tokenize = load_fn<mtmd_tokenize_fn>(mtmd_h, "mtmd_tokenize", out);
     auto p_mtmd_encode_chunk = load_fn<mtmd_encode_chunk_fn>(mtmd_h, "mtmd_encode_chunk", out);
-    auto p_mtmd_get_output_embd = load_fn<mtmd_get_output_embd_fn>(mtmd_h, "mtmd_get_output_embd", out, false);
-    auto p_mtmd_input_chunk_get_type = load_fn<mtmd_input_chunk_get_type_fn>(mtmd_h, "mtmd_input_chunk_get_type", out, false);
-    auto p_mtmd_input_chunk_get_n_tokens = load_fn<mtmd_input_chunk_get_n_tokens_fn>(mtmd_h, "mtmd_input_chunk_get_n_tokens", out, false);
+    auto p_mtmd_get_output_embd = load_fn<mtmd_get_output_embd_fn>(mtmd_h, "mtmd_get_output_embd", out);
+    auto p_mtmd_input_chunk_get_type = load_fn<mtmd_input_chunk_get_type_fn>(mtmd_h, "mtmd_input_chunk_get_type", out);
+    auto p_mtmd_input_chunk_get_tokens_text = load_fn<mtmd_input_chunk_get_tokens_text_fn>(mtmd_h, "mtmd_input_chunk_get_tokens_text", out);
+    auto p_mtmd_input_chunk_get_n_tokens = load_fn<mtmd_input_chunk_get_n_tokens_fn>(mtmd_h, "mtmd_input_chunk_get_n_tokens", out);
     auto p_mtmd_input_chunk_get_n_pos = load_fn<mtmd_input_chunk_get_n_pos_fn>(mtmd_h, "mtmd_input_chunk_get_n_pos", out, false);
-    auto p_mtmd_input_chunk_get_id = load_fn<mtmd_input_chunk_get_id_fn>(mtmd_h, "mtmd_input_chunk_get_id", out, false);
 
     if (!p_llama_backend_init || !p_llama_backend_free || !p_llama_model_default_params ||
-        !p_llama_model_load_from_file || !p_llama_model_free ||
+        !p_llama_model_load_from_file || !p_llama_model_free || !p_llama_context_default_params ||
+        !p_llama_init_from_model || !p_llama_free || !p_llama_model_get_vocab || !p_llama_model_n_embd ||
+        !p_llama_batch_init || !p_llama_batch_free || !p_llama_decode ||
         !p_mtmd_context_params_default || !p_mtmd_init_from_file || !p_mtmd_free ||
-        !p_mtmd_helper_bitmap_init_from_file || !p_mtmd_bitmap_free ||
-        !p_mtmd_input_chunks_init || !p_mtmd_input_chunks_size || !p_mtmd_input_chunks_get ||
-        !p_mtmd_input_chunks_free || !p_mtmd_tokenize || !p_mtmd_encode_chunk || !p_mtmd_input_chunk_get_type) {
-        out << "\nSTAGE5O_STOP: required function pointer missing ❌\n";
-        std::string result = out.str();
-        LOGI("%s", result.c_str());
-        return make_jstring(env, result);
+        !p_mtmd_helper_bitmap_init_from_file || !p_mtmd_bitmap_free || !p_mtmd_input_chunks_init ||
+        !p_mtmd_input_chunks_size || !p_mtmd_input_chunks_get || !p_mtmd_input_chunks_free ||
+        !p_mtmd_tokenize || !p_mtmd_encode_chunk || !p_mtmd_get_output_embd ||
+        !p_mtmd_input_chunk_get_type || !p_mtmd_input_chunk_get_tokens_text || !p_mtmd_input_chunk_get_n_tokens) {
+        out << "\nSTAGE5P_STOP: required function pointer missing ❌\n";
+        return make_jstring(env, out.str());
     }
 
-    out << "\nCalling llama_backend_init + model load + mtmd_init_from_file...\n";
+    out << "\nLoading model + context + mtmd...\n";
     p_llama_backend_init();
     llama_model_params model_params = p_llama_model_default_params();
     model_params.n_gpu_layers = 0;
@@ -294,171 +218,207 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     if (!model) {
         out << "MODEL_LOAD_FAILED ❌\n";
         p_llama_backend_free();
-        std::string result = out.str();
-        LOGI("%s", result.c_str());
-        return make_jstring(env, result);
+        return make_jstring(env, out.str());
     }
     out << "MODEL_LOAD_OK ✅\n";
+
+    llama_context_params cparams = p_llama_context_default_params();
+    cparams.n_ctx = 768;
+    cparams.n_batch = 256;
+    cparams.n_threads = 4;
+    cparams.n_threads_batch = 4;
+    llama_context *ctx = p_llama_init_from_model(model, cparams);
+    if (!ctx) {
+        out << "LLAMA_CONTEXT_CREATE_FAILED ❌\n";
+        p_llama_model_free(model);
+        p_llama_backend_free();
+        return make_jstring(env, out.str());
+    }
+    out << "LLAMA_CONTEXT_CREATE_OK ✅\n";
 
     mtmd_context_params mtmd_params = p_mtmd_context_params_default();
     mtmd_context *mctx = p_mtmd_init_from_file(g_mmproj_path.c_str(), model, mtmd_params);
     if (!mctx) {
         out << "MTMD_INIT_FROM_FILE_FAILED ❌\n";
+        p_llama_free(ctx);
         p_llama_model_free(model);
         p_llama_backend_free();
-        std::string result = out.str();
-        LOGI("%s", result.c_str());
-        return make_jstring(env, result);
+        return make_jstring(env, out.str());
     }
     out << "MTMD_INIT_FROM_FILE_OK ✅\n";
 
-    out << "\nCalling mtmd_helper_bitmap_init_from_file(mctx, saved_screenshot)...\n";
     mtmd_bitmap *bitmap = p_mtmd_helper_bitmap_init_from_file(mctx, image.c_str());
-    out << "BITMAP_PTR=" << bitmap << "\n";
     if (!bitmap) {
         out << "BITMAP_LOAD_FAILED ❌\n";
         p_mtmd_free(mctx);
+        p_llama_free(ctx);
         p_llama_model_free(model);
         p_llama_backend_free();
-        std::string result = out.str();
-        LOGI("%s", result.c_str());
-        return make_jstring(env, result);
+        return make_jstring(env, out.str());
     }
     out << "BITMAP_LOAD_OK ✅\n";
-    if (p_mtmd_bitmap_get_nx && p_mtmd_bitmap_get_ny) {
-        out << "BITMAP_WIDTH=" << p_mtmd_bitmap_get_nx(bitmap) << "\n";
-        out << "BITMAP_HEIGHT=" << p_mtmd_bitmap_get_ny(bitmap) << "\n";
-    }
-    if (p_mtmd_bitmap_get_n_bytes) {
-        out << "BITMAP_BYTES=" << p_mtmd_bitmap_get_n_bytes(bitmap) << "\n";
-    }
 
     const char *marker_c = p_mtmd_default_marker ? p_mtmd_default_marker() : nullptr;
     std::string marker = (marker_c && marker_c[0]) ? std::string(marker_c) : std::string("<__media__>");
-    out << "MTMD_DEFAULT_MARKER=" << marker << "\n";
 
+    std::string user_instruction = "স্ক্রিনে কী আছে? খুব সংক্ষেপে বাংলায় বলো।";
+    if (!p.empty()) user_instruction = p.substr(0, 300);
     std::string tokenize_prompt;
     tokenize_prompt += "You are Nahid AI Offline Vision Judge.\n";
     tokenize_prompt += "Screenshot: ";
     tokenize_prompt += marker;
     tokenize_prompt += "\nUser instruction: ";
-    tokenize_prompt += p;
-    tokenize_prompt += "\nReturn compact Bengali summary plus JSON with visible_items and confidence.";
-    out << "TOKENIZE_PROMPT_PREVIEW=" << tokenize_prompt.substr(0, 260) << "\n";
+    tokenize_prompt += user_instruction;
+    tokenize_prompt += "\nAnswer in Bengali in one short sentence.\n";
 
     mtmd_input_chunks *chunks = p_mtmd_input_chunks_init();
-    if (!chunks) {
-        out << "INPUT_CHUNKS_INIT_FAILED ❌\n";
-        p_mtmd_bitmap_free(bitmap);
-        p_mtmd_free(mctx);
-        p_llama_model_free(model);
-        p_llama_backend_free();
-        std::string result = out.str();
-        LOGI("%s", result.c_str());
-        return make_jstring(env, result);
-    }
-    out << "INPUT_CHUNKS_INIT_OK ✅\n";
-
     mtmd_input_text input_text{};
     input_text.text = tokenize_prompt.c_str();
     input_text.add_special = true;
     input_text.parse_special = true;
     const mtmd_bitmap *bitmaps[1] = { bitmap };
-
-    out << "Calling mtmd_tokenize(ctx, chunks, text_with_marker, 1 bitmap)...\n";
     int32_t tok_rc = p_mtmd_tokenize(mctx, chunks, &input_text, bitmaps, 1);
     out << "MTMD_TOKENIZE_RC=" << tok_rc << "\n";
     if (tok_rc != 0) {
         out << "MTMD_TOKENIZE_FAILED ❌\n";
-        out << "Return meanings from mtmd.h: 1=bitmap/marker count mismatch, 2=image preprocessing error.\n";
         p_mtmd_input_chunks_free(chunks);
         p_mtmd_bitmap_free(bitmap);
         p_mtmd_free(mctx);
+        p_llama_free(ctx);
         p_llama_model_free(model);
         p_llama_backend_free();
-        std::string result = out.str();
-        LOGI("%s", result.c_str());
-        return make_jstring(env, result);
+        return make_jstring(env, out.str());
     }
-
     out << "MTMD_TOKENIZE_OK ✅\n";
+
+    const llama_vocab *vocab = p_llama_model_get_vocab(model);
+    const int n_embd = p_llama_model_n_embd(model);
+    out << "LLAMA_N_EMBD=" << n_embd << "\n";
+
+    llama_pos cur_pos = 0;
+    bool eval_failed = false;
     size_t n_chunks = p_mtmd_input_chunks_size(chunks);
     out << "INPUT_CHUNKS_SIZE=" << n_chunks << "\n";
-    for (size_t i = 0; i < n_chunks && i < 12; ++i) {
-        const mtmd_input_chunk *chunk = p_mtmd_input_chunks_get(chunks, i);
-        out << "CHUNK[" << i << "]=";
-        if (!chunk) {
-            out << "NULL\n";
-            continue;
-        }
-        if (p_mtmd_input_chunk_get_type) {
-            enum mtmd_input_chunk_type t = p_mtmd_input_chunk_get_type(chunk);
-            out << "type=" << static_cast<int>(t);
-            if (t == MTMD_INPUT_CHUNK_TYPE_TEXT) out << "(TEXT)";
-            else if (t == MTMD_INPUT_CHUNK_TYPE_IMAGE) out << "(IMAGE)";
-            else if (t == MTMD_INPUT_CHUNK_TYPE_AUDIO) out << "(AUDIO)";
-            else out << "(UNKNOWN)";
-        } else {
-            out << "type=?";
-        }
-        if (p_mtmd_input_chunk_get_n_tokens) {
-            out << ", tokens=" << p_mtmd_input_chunk_get_n_tokens(chunk);
-        }
-        if (p_mtmd_input_chunk_get_n_pos) {
-            out << ", n_pos=" << p_mtmd_input_chunk_get_n_pos(chunk);
-        }
-        if (p_mtmd_input_chunk_get_id) {
-            const char *id = p_mtmd_input_chunk_get_id(chunk);
-            if (id) out << ", id=" << id;
-        }
-        out << "\n";
-    }
 
-    out << "\nImage chunk encode probe:\n";
-    size_t image_chunks = 0;
-    size_t encode_ok = 0;
-    for (size_t i = 0; i < n_chunks; ++i) {
-        const mtmd_input_chunk *chunk = p_mtmd_input_chunks_get(chunks, i);
+    auto decode_text_tokens = [&](const llama_token *tokens, size_t n_tokens, bool want_logits) -> bool {
+        if (!tokens || n_tokens == 0) return true;
+        llama_batch batch = p_llama_batch_init((int32_t)n_tokens, 0, 1);
+        batch.n_tokens = (int32_t)n_tokens;
+        for (int32_t i = 0; i < (int32_t)n_tokens; ++i) {
+            batch.token[i] = tokens[i];
+            batch.pos[i] = cur_pos + i;
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = (want_logits && i == (int32_t)n_tokens - 1) ? 1 : 0;
+        }
+        int rc = p_llama_decode(ctx, batch);
+        p_llama_batch_free(batch);
+        if (rc != 0) return false;
+        cur_pos += (llama_pos)n_tokens;
+        return true;
+    };
+
+    auto decode_image_embd = [&](float *embd, size_t n_tokens, bool want_logits) -> bool {
+        if (!embd || n_tokens == 0 || n_embd <= 0) return false;
+        llama_batch batch = p_llama_batch_init((int32_t)n_tokens, n_embd, 1);
+        batch.n_tokens = (int32_t)n_tokens;
+        std::memcpy(batch.embd, embd, n_tokens * (size_t)n_embd * sizeof(float));
+        for (int32_t i = 0; i < (int32_t)n_tokens; ++i) {
+            batch.pos[i] = cur_pos + i;
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = (want_logits && i == (int32_t)n_tokens - 1) ? 1 : 0;
+        }
+        int rc = p_llama_decode(ctx, batch);
+        p_llama_batch_free(batch);
+        if (rc != 0) return false;
+        cur_pos += (llama_pos)n_tokens;
+        return true;
+    };
+
+    out << "\nEvaluating chunks into llama context...\n";
+    for (size_t ci = 0; ci < n_chunks; ++ci) {
+        const mtmd_input_chunk *chunk = p_mtmd_input_chunks_get(chunks, ci);
         if (!chunk) continue;
         enum mtmd_input_chunk_type t = p_mtmd_input_chunk_get_type(chunk);
-        if (t != MTMD_INPUT_CHUNK_TYPE_IMAGE) continue;
-        image_chunks++;
-        out << "Calling mtmd_encode_chunk on IMAGE chunk[" << i << "]...\n";
-        int32_t enc_rc = p_mtmd_encode_chunk(mctx, chunk);
-        out << "MTMD_ENCODE_CHUNK_RC=" << enc_rc << "\n";
-        if (enc_rc == 0) {
-            encode_ok++;
-            out << "MTMD_ENCODE_CHUNK_OK ✅\n";
-            if (p_mtmd_get_output_embd) {
-                float *embd = p_mtmd_get_output_embd(mctx);
-                out << "MTMD_OUTPUT_EMBD_PTR=" << embd << "\n";
-                if (embd) out << "MTMD_OUTPUT_EMBD_AVAILABLE ✅\n";
-                else out << "MTMD_OUTPUT_EMBD_NULL ⚠️\n";
+        bool is_last = (ci == n_chunks - 1);
+        size_t n_tok = p_mtmd_input_chunk_get_n_tokens(chunk);
+        llama_pos n_pos = p_mtmd_input_chunk_get_n_pos ? p_mtmd_input_chunk_get_n_pos(chunk) : (llama_pos)n_tok;
+        out << "CHUNK[" << ci << "] type=" << (int)t << ", tokens=" << n_tok << ", n_pos=" << n_pos << "\n";
+        if (t == MTMD_INPUT_CHUNK_TYPE_TEXT) {
+            size_t text_n = 0;
+            const llama_token *text_tokens = p_mtmd_input_chunk_get_tokens_text(chunk, &text_n);
+            out << "  TEXT_TOKENS=" << text_n << "\n";
+            if (!decode_text_tokens(text_tokens, text_n, is_last)) {
+                out << "  TEXT_DECODE_FAILED ❌\n";
+                eval_failed = true;
+                break;
             }
-        } else {
-            out << "MTMD_ENCODE_CHUNK_FAILED ❌\n";
+            out << "  TEXT_DECODE_OK ✅ cur_pos=" << cur_pos << "\n";
+        } else if (t == MTMD_INPUT_CHUNK_TYPE_IMAGE) {
+            int32_t enc_rc = p_mtmd_encode_chunk(mctx, chunk);
+            out << "  MTMD_ENCODE_CHUNK_RC=" << enc_rc << "\n";
+            if (enc_rc != 0) {
+                out << "  IMAGE_ENCODE_FAILED ❌\n";
+                eval_failed = true;
+                break;
+            }
+            float *embd = p_mtmd_get_output_embd(mctx);
+            out << "  IMAGE_EMBD_PTR=" << embd << "\n";
+            if (!decode_image_embd(embd, n_tok, is_last)) {
+                out << "  IMAGE_EMBD_DECODE_FAILED ❌\n";
+                eval_failed = true;
+                break;
+            }
+            out << "  IMAGE_EMBD_DECODE_OK ✅ cur_pos=" << cur_pos << "\n";
         }
-        // Encode only the first image chunk in this probe to reduce memory/thermal risk.
-        break;
-    }
-    out << "IMAGE_CHUNKS_FOUND=" << image_chunks << "\n";
-    out << "IMAGE_CHUNKS_ENCODE_OK=" << encode_ok << "\n";
-    if (image_chunks > 0 && encode_ok > 0) {
-        out << "STAGE5O_IMAGE_CHUNK_ENCODE_PROBE_OK ✅\n";
-    } else if (image_chunks == 0) {
-        out << "STAGE5O_NO_IMAGE_CHUNK_FOUND ❌\n";
-    } else {
-        out << "STAGE5O_IMAGE_CHUNK_ENCODE_PROBE_FAILED ❌\n";
     }
 
-    out << "Freeing chunks, bitmap, mtmd context, and model immediately to keep RAM safe...\n";
+    if (eval_failed) {
+        out << "STAGE5P_CHUNK_EVAL_FAILED ❌\n";
+        p_mtmd_input_chunks_free(chunks);
+        p_mtmd_bitmap_free(bitmap);
+        p_mtmd_free(mctx);
+        p_llama_free(ctx);
+        p_llama_model_free(model);
+        p_llama_backend_free();
+        return make_jstring(env, out.str());
+    }
+    out << "STAGE5P_CHUNK_EVAL_OK ✅\n";
+
+    out << "\nSampling short answer...\n";
+    llama_sampler *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.90f, 1));
+    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.25f));
+    llama_sampler_chain_add(smpl, llama_sampler_init_dist(2026));
+
+    std::string generated;
+    int generated_count = 0;
+    for (int i = 0; i < 32; ++i) {
+        llama_token new_token = llama_sampler_sample(smpl, ctx, -1);
+        if (llama_vocab_is_eog(vocab, new_token)) break;
+        generated += token_to_piece_safe(vocab, new_token);
+        if (!decode_text_tokens(&new_token, 1, true)) {
+            out << "GEN_TOKEN_DECODE_FAILED_AT=" << i << " ❌\n";
+            break;
+        }
+        generated_count++;
+    }
+    llama_sampler_free(smpl);
+
+    out << "GENERATION_STARTED ✅\n";
+    out << "GENERATED_TOKENS=" << generated_count << "\n";
+    out << "TEXT_OUTPUT=" << generated << "\n";
+    if (generated_count > 0) out << "STAGE5P_FIRST_SCREENSHOT_ANSWER_PROBE_OK ✅\n";
+    else out << "STAGE5P_GENERATED_EMPTY ⚠️\n";
+
     p_mtmd_input_chunks_free(chunks);
     p_mtmd_bitmap_free(bitmap);
     p_mtmd_free(mctx);
+    p_llama_free(ctx);
     p_llama_model_free(model);
     p_llama_backend_free();
-
-    out << "NEXT_SAFE_STAGE: connect encoded image embeddings to llama decode and generate first screenshot answer.\n";
 
     std::string result = out.str();
     LOGI("%s", result.c_str());
@@ -467,7 +427,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    LOGI("nativeRelease Stage 5O called");
+    LOGI("nativeRelease Stage 5P called");
     g_main_model_path.clear();
     g_mmproj_path.clear();
     g_initialized = false;
