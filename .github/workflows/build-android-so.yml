@@ -1,0 +1,45 @@
+name: Build Android Native SO
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK and CMake
+        run: |
+          sdkmanager "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Configure CMake for arm64-v8a
+        run: |
+          mkdir -p build-arm64
+          cmake -S . -B build-arm64 \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_HOME/ndk/26.1.10909125/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build .so
+        run: cmake --build build-arm64 --config Release -j2
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p artifact/arm64-v8a
+          cp build-arm64/libnahid_qwenvl.so artifact/arm64-v8a/libnahid_qwenvl.so
+          cd artifact
+          zip -r ../libnahid_qwenvl_arm64_v8a.zip arm64-v8a
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libnahid_qwenvl_arm64_v8a
+          path: libnahid_qwenvl_arm64_v8a.zip
