@@ -2,39 +2,32 @@ name: Build Android Native SO
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build:
+  build-android-arm64:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout build repo
+      - name: Checkout Nahid wrapper repo
         uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK/NDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android NDK
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;26.1.10909125" "cmake;3.22.1"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: true
 
       - name: Clone llama.cpp
         run: |
-          rm -rf /tmp/llama.cpp
-          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
+          rm -rf external/llama.cpp
+          mkdir -p external
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp external/llama.cpp
 
-      - name: Configure llama.cpp Android library-only build
+      - name: Configure llama.cpp Android shared libraries only
         run: |
-          cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build-android \
+          mkdir -p build-llama-android
+          cmake -S external/llama.cpp -B build-llama-android \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
@@ -44,103 +37,58 @@ jobs:
             -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_CURL=OFF \
-            -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF
 
-      - name: Show available llama.cpp targets
+      - name: List build targets
         run: |
-          cmake --build /tmp/llama.cpp/build-android --target help > /tmp/llama_targets.txt || true
-          echo "---- targets containing llama/ggml/mtmd/llava/clip ----"
-          grep -E "(^|[ /])(llama|ggml|mtmd|llava|clip)" /tmp/llama_targets.txt | head -n 200 || true
+          cmake --build build-llama-android --target help | tee build_targets.txt || true
 
-      - name: Build core llama.cpp shared libraries
+      - name: Build llama/ggml shared targets only
         run: |
-          cmake --build /tmp/llama.cpp/build-android --config Release --target ggml ggml-base ggml-cpu llama -j2
-          find /tmp/llama.cpp/build-android -name "*.so" -print
+          cmake --build build-llama-android --target ggml --config Release -j2 || true
+          cmake --build build-llama-android --target ggml-base --config Release -j2 || true
+          cmake --build build-llama-android --target ggml-cpu --config Release -j2 || true
+          cmake --build build-llama-android --target llama --config Release -j2 || true
+          cmake --build build-llama-android --target mtmd --config Release -j2 || true
 
-      - name: Build multimodal shared library target if available
+      - name: Build Nahid JNI wrapper
         run: |
-          set -e
-          TARGETS="$(cat /tmp/llama_targets.txt || true)"
-          if echo "$TARGETS" | grep -qE '(^|[[:space:]])mtmd($|[[:space:]:])'; then
-            echo "MTMD_TARGET=mtmd" >> $GITHUB_ENV
-            cmake --build /tmp/llama.cpp/build-android --config Release --target mtmd -j2
-          elif echo "$TARGETS" | grep -qE '(^|[[:space:]])llava($|[[:space:]:])'; then
-            echo "MTMD_TARGET=llava" >> $GITHUB_ENV
-            cmake --build /tmp/llama.cpp/build-android --config Release --target llava -j2
-          elif echo "$TARGETS" | grep -qE '(^|[[:space:]])clip($|[[:space:]:])'; then
-            echo "MTMD_TARGET=clip" >> $GITHUB_ENV
-            cmake --build /tmp/llama.cpp/build-android --config Release --target clip -j2
-          else
-            echo "No known multimodal library target found. Available related targets:"
-            grep -E "(^|[ /])(mtmd|llava|clip|qwen|vision|image)" /tmp/llama_targets.txt | head -n 200 || true
-            exit 1
-          fi
-          echo "Built multimodal target: ${MTMD_TARGET}"
-          find /tmp/llama.cpp/build-android -name "*.so" -print
-
-      - name: Locate shared libraries
-        run: |
-          LLAMA_SO=$(find /tmp/llama.cpp/build-android -name "libllama.so" | head -n 1)
-          GGML_SO=$(find /tmp/llama.cpp/build-android -name "libggml.so" | head -n 1)
-          GGML_BASE_SO=$(find /tmp/llama.cpp/build-android -name "libggml-base.so" | head -n 1)
-          GGML_CPU_SO=$(find /tmp/llama.cpp/build-android -name "libggml-cpu.so" | head -n 1)
-          MTMD_SO=$(find /tmp/llama.cpp/build-android -name "libmtmd.so" | head -n 1)
-          LLAVA_SO=$(find /tmp/llama.cpp/build-android -name "libllava.so" | head -n 1)
-          CLIP_SO=$(find /tmp/llama.cpp/build-android -name "libclip.so" | head -n 1)
-          echo "LLAMA_SO=$LLAMA_SO" >> $GITHUB_ENV
-          echo "GGML_SO=$GGML_SO" >> $GITHUB_ENV
-          echo "GGML_BASE_SO=$GGML_BASE_SO" >> $GITHUB_ENV
-          echo "GGML_CPU_SO=$GGML_CPU_SO" >> $GITHUB_ENV
-          echo "MTMD_SO=$MTMD_SO" >> $GITHUB_ENV
-          echo "LLAVA_SO=$LLAVA_SO" >> $GITHUB_ENV
-          echo "CLIP_SO=$CLIP_SO" >> $GITHUB_ENV
-          echo "LLAMA_SO=$LLAMA_SO"
-          echo "GGML_SO=$GGML_SO"
-          echo "GGML_BASE_SO=$GGML_BASE_SO"
-          echo "GGML_CPU_SO=$GGML_CPU_SO"
-          echo "MTMD_SO=$MTMD_SO"
-          echo "LLAVA_SO=$LLAVA_SO"
-          echo "CLIP_SO=$CLIP_SO"
-          test -n "$LLAMA_SO"
-          test -n "$GGML_SO"
-          test -n "$GGML_BASE_SO"
-          test -n "$GGML_CPU_SO"
-          test -n "$MTMD_SO$LLAVA_SO$CLIP_SO"
-
-      - name: Configure Nahid JNI wrapper Stage 5H-Lite safe multimodal symbol probe
-        run: |
-          cmake -S . -B build-nahid-wrapper \
+          mkdir -p build-wrapper
+          cmake -S . -B build-wrapper \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DLLAMA_CPP_DIR=/tmp/llama.cpp \
-            -DLLAMA_SO="$LLAMA_SO" \
-            -DGGML_SO="$GGML_SO" \
-            -DGGML_BASE_SO="$GGML_BASE_SO" \
-            -DGGML_CPU_SO="$GGML_CPU_SO"
+            -DLLAMA_BUILD_DIR="$GITHUB_WORKSPACE/build-llama-android"
+          cmake --build build-wrapper --config Release -j2
 
-      - name: Build Nahid JNI wrapper
+      - name: Collect shared libraries and exported symbols
         run: |
-          cmake --build build-nahid-wrapper --config Release -j2
-
-      - name: Collect SO files
-        run: |
-          rm -rf artifact/arm64-v8a
           mkdir -p artifact/arm64-v8a
-          cp "$GGML_SO" artifact/arm64-v8a/libggml.so
-          cp "$GGML_BASE_SO" artifact/arm64-v8a/libggml-base.so
-          cp "$GGML_CPU_SO" artifact/arm64-v8a/libggml-cpu.so
-          cp "$LLAMA_SO" artifact/arm64-v8a/libllama.so
-          if [ -n "$MTMD_SO" ]; then cp "$MTMD_SO" artifact/arm64-v8a/libmtmd.so; fi
-          if [ -n "$LLAVA_SO" ]; then cp "$LLAVA_SO" artifact/arm64-v8a/libllava.so; fi
-          if [ -n "$CLIP_SO" ]; then cp "$CLIP_SO" artifact/arm64-v8a/libclip.so; fi
-          cp build-nahid-wrapper/libnahid_qwenvl.so artifact/arm64-v8a/libnahid_qwenvl.so
-          ls -lah artifact/arm64-v8a
+          find build-llama-android -name "*.so" -print -exec cp -f {} artifact/arm64-v8a/ \;
+          find build-wrapper -name "libnahid_qwenvl.so" -print -exec cp -f {} artifact/arm64-v8a/ \;
+
+          echo "=== Artifact SO files ===" | tee artifact/README_SYMBOLS.txt
+          find artifact/arm64-v8a -maxdepth 1 -type f -name "*.so" -printf "%f %s bytes\n" | sort | tee -a artifact/README_SYMBOLS.txt
+
+          echo "=== libmtmd exported dynamic symbols: llvm-nm ===" | tee artifact/mtmd_symbols_nm.txt
+          if [ -f artifact/arm64-v8a/libmtmd.so ]; then
+            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D --defined-only artifact/arm64-v8a/libmtmd.so | sort | tee -a artifact/mtmd_symbols_nm.txt || true
+            echo "=== readelf libmtmd symbols ===" | tee artifact/mtmd_symbols_readelf.txt
+            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -Ws artifact/arm64-v8a/libmtmd.so | sort | tee -a artifact/mtmd_symbols_readelf.txt || true
+          else
+            echo "libmtmd.so not built/found" | tee -a artifact/mtmd_symbols_nm.txt
+          fi
+
+          echo "=== libllama exported symbols related to multimodal/mtmd/image ===" | tee artifact/libllama_symbol_probe.txt
+          if [ -f artifact/arm64-v8a/libllama.so ]; then
+            "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D --defined-only artifact/arm64-v8a/libllama.so | grep -Ei "mtmd|clip|image|vision|mmproj|llava|qwen" | sort | tee -a artifact/libllama_symbol_probe.txt || true
+          else
+            echo "libllama.so not built/found" | tee -a artifact/libllama_symbol_probe.txt
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5h_lite_safe_multimodal_symbol_probe_arm64_v8a
+          name: libnahid_qwenvl_stage5i_mtmd_symbol_dump_arm64_v8a
           path: artifact
