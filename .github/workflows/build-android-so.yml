@@ -58,6 +58,19 @@ jobs:
           test -f "$(find build-llama-android -name libllama.so | head -1)"
           test -f "$(find build-llama-android -name libmtmd.so | head -1)"
 
+
+      - name: Dump mtmd API header for Stage 5M
+        run: |
+          mkdir -p artifact
+          MTMD_HEADER=$(find external/llama.cpp -name mtmd.h | head -1)
+          echo "MTMD_HEADER=$MTMD_HEADER" | tee artifact/README_STAGE5M_MTMD_HEADER.txt
+          echo "This artifact is for API signature inspection before calling mtmd_input_chunks/tokenize/eval." >> artifact/README_STAGE5M_MTMD_HEADER.txt
+          echo "Do not install these .so files unless instructed; first send mtmd_header_relevant.txt to ChatGPT." >> artifact/README_STAGE5M_MTMD_HEADER.txt
+          cp "$MTMD_HEADER" artifact/mtmd_full_header.h
+          grep -nE "mtmd_(tokenize|encode|input_chunks|helper_eval|helper_get|helper_decode|bitmap|input_text|input_image|context_params|init_from_file|free)|typedef|struct mtmd|enum mtmd" "$MTMD_HEADER" > artifact/mtmd_header_relevant.txt || true
+          echo "=== Relevant mtmd.h lines ==="
+          cat artifact/mtmd_header_relevant.txt
+
       - name: Build Nahid JNI wrapper
         run: |
           mkdir -p build-wrapper
@@ -83,5 +96,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5l_b_bitmap_load_compile_fix_arm64_v8a
+          name: libnahid_qwenvl_stage5m_mtmd_header_dump_arm64_v8a
           path: artifact

@@ -77,7 +77,7 @@ static Fn load_fn(void *handle, const char *symbol, std::ostringstream &out, boo
 
 static std::string mtmd_init_from_file_probe() {
     std::ostringstream out;
-    out << "MTMD INIT-FROM-FILE PROBE — Stage 5L-C\n";
+    out << "MTMD INIT-FROM-FILE PROBE — Stage 5M header-dump base\n";
     out << "This stage loads main GGUF, then calls only mtmd_context_params_default + mtmd_init_from_file.\n";
     out << "No screenshot bitmap, no mtmd_encode, no image inference is called.\n\n";
 
@@ -168,8 +168,8 @@ static std::string mtmd_init_from_file_probe() {
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv *env, jobject /*thiz*/) {
-    LOGI("nativePing Stage 5L-C called");
-    return make_jstring(env, "PONG_STAGE_5L_C: bitmap pointer-API fix probe is available.");
+    LOGI("nativePing Stage 5M header-dump base called");
+    return make_jstring(env, "PONG_STAGE_5M: header dump build base is available.");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -184,11 +184,11 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_initialized = !g_main_model_path.empty() && !g_mmproj_path.empty();
 
     std::ostringstream out;
-    out << "INIT_STAGE_5L_C_BITMAP_POINTER_API_FIX\n";
+    out << "INIT_STAGE_5M_HEADER_DUMP_BASE_BITMAP_OK\n";
     out << "MAIN=" << g_main_model_path << "\n";
     out << "MMPROJ=" << g_mmproj_path << "\n\n";
     out << mtmd_init_from_file_probe();
-    out << "\nNOTE: Stage 5L-C does NOT run screenshot understanding yet. It only verifies mmproj projector init through libmtmd.\n";
+    out << "\nNOTE: Stage 5M header-dump base does NOT run screenshot understanding yet. It only verifies mmproj projector init through libmtmd.\n";
 
     std::string result = out.str();
     LOGI("%s", result.c_str());
@@ -206,7 +206,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     std::string p = jstring_to_std(env, prompt);
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5L_C_BITMAP_POINTER_API_FIX\n";
+    out << "ANALYZE_STAGE_5M_HEADER_DUMP_BASE_BITMAP_OK\n";
     out << "This stage loads the saved screenshot file using mtmd_helper_bitmap_init_from_file.\n";
     out << "No mtmd_encode, no token evaluation, no real screenshot understanding is called.\n\n";
     out << "IMAGE=" << image << "\n";
@@ -229,7 +229,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     void *mtmd_h = safe_dlopen("libmtmd.so", out);
     (void)ggml; (void)ggml_base; (void)ggml_cpu;
 
-    out << "\nModel + bitmap function pointers (Stage 5L-C pointer-return API):\n";
+    out << "\nModel + bitmap function pointers (Stage 5M header-dump base pointer-return API):\n";
     auto p_llama_backend_init = load_fn<decltype(&llama_backend_init)>(llama_h, "llama_backend_init", out);
     auto p_llama_backend_free = load_fn<decltype(&llama_backend_free)>(llama_h, "llama_backend_free", out);
     auto p_llama_model_default_params = load_fn<decltype(&llama_model_default_params)>(llama_h, "llama_model_default_params", out);
@@ -317,7 +317,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     p_llama_model_free(model);
     p_llama_backend_free();
 
-    out << "STAGE5L_C_BITMAP_LOAD_PROBE_OK ✅\n";
+    out << "STAGE5M_BASE_BITMAP_LOAD_STILL_OK ✅\n";
     out << "NEXT_SAFE_STAGE: create mtmd input chunks from prompt + bitmap, without generation yet.\n";
 
     std::string result = out.str();
@@ -327,7 +327,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    LOGI("nativeRelease Stage 5L-C called");
+    LOGI("nativeRelease Stage 5M header-dump base called");
     g_main_model_path.clear();
     g_mmproj_path.clear();
     g_initialized = false;
