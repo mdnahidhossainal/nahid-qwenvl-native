@@ -87,7 +87,7 @@ static std::string token_to_piece_safe(const llama_vocab * vocab, llama_token to
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv *env, jobject /*thiz*/) {
-    return make_jstring(env, "PONG_STAGE_5Q: chat-template + greedy decode probe available.");
+    return make_jstring(env, "PONG_STAGE_5R: Bengali screen-summary prompt probe available.");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -102,14 +102,14 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_initialized = !g_main_model_path.empty() && !g_mmproj_path.empty();
 
     std::ostringstream out;
-    out << "INIT_STAGE_5Q_CHAT_TEMPLATE_GREEDY_PROBE\n";
+    out << "INIT_STAGE_5R_BENGALI_SCREEN_SUMMARY_PROBE\n";
     out << "MAIN=" << g_main_model_path << "\n";
     out << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
     out << "MAIN_SIZE=" << file_size(g_main_model_path) << "\n";
     out << "MMPROJ=" << g_mmproj_path << "\n";
     out << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n";
     out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n";
-    out << "Stage 5Q init only checks paths. Chat-template greedy decode probe runs inside nativeAnalyze.\n";
+    out << "Stage 5R init only checks paths. Bengali screen-summary generation probe runs inside nativeAnalyze.\n";
     return make_jstring(env, out.str());
 }
 
@@ -124,9 +124,9 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     std::string p = jstring_to_std(env, prompt);
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5Q_CHAT_TEMPLATE_GREEDY_PROBE\n";
-    out << "Goal: evaluate TEXT + IMAGE chunks using Qwen chat template, n_pos image decode, and greedy generation.\n";
-    out << "This attempts to fix Stage 5P gibberish by using a cleaner prompt/template and greedy sampling.\n\n";
+    out << "ANALYZE_STAGE_5R_BENGALI_SCREEN_SUMMARY_PROBE\n";
+    out << "Goal: evaluate TEXT + IMAGE chunks and generate a more useful Bengali screen summary.\n";
+    out << "This attempts to improve Stage 5Q short/weak output by using a clearer screen-analysis prompt.\n\n";
     out << "IMAGE=" << image << "\n";
     out << "IMAGE_EXISTS=" << (file_exists(image) ? "true" : "false") << "\n";
     out << "IMAGE_SIZE=" << file_size(image) << "\n";
@@ -148,7 +148,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     void *mtmd_h = safe_dlopen("libmtmd.so", out);
     (void)ggml; (void)ggml_base; (void)ggml_cpu;
 
-    out << "\nFunction pointers (Stage 5P):\n";
+    out << "\nFunction pointers (Stage 5R):\n";
     auto p_llama_backend_init = load_fn<decltype(&llama_backend_init)>(llama_h, "llama_backend_init", out);
     auto p_llama_backend_free = load_fn<decltype(&llama_backend_free)>(llama_h, "llama_backend_free", out);
     auto p_llama_model_default_params = load_fn<decltype(&llama_model_default_params)>(llama_h, "llama_model_default_params", out);
@@ -261,16 +261,15 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     const char *marker_c = p_mtmd_default_marker ? p_mtmd_default_marker() : nullptr;
     std::string marker = (marker_c && marker_c[0]) ? std::string(marker_c) : std::string("<__media__>");
 
-    // Stage 5Q: use a compact Qwen-style chat template instead of passing the
-    // long Android diagnostic prompt directly. The model should see one image
-    // marker and a very short Bengali task.
-    std::string user_instruction = "স্ক্রিনে কী দেখা যাচ্ছে? বাংলায় এক বাক্যে বলো।";
+    // Stage 5R: use a clearer task prompt. Stage 5Q proved the full image->decode->generate path,
+    // but the answer was too weak. Keep the safe n_pos decode path and improve only the prompt.
+    std::string user_instruction = "এই ফোনের স্ক্রিনশটটি ভালোভাবে দেখে বাংলায় ১-২ বাক্যে বলো স্ক্রিনে কী দেখা যাচ্ছে। দৃশ্যমান অ্যাপ/পৃষ্ঠা, লেখা, বাটন, ছবি বা আইকন উল্লেখ করো। কিছু নিশ্চিত না হলে 'নিশ্চিত নই' বলো।";
     std::string tokenize_prompt;
     tokenize_prompt += "<|im_start|>system\n";
-    tokenize_prompt += "You are Nahid AI Offline Vision Judge. Answer only in Bengali. Be concise. Do not write Chinese. Do not repeat the question.\n";
+    tokenize_prompt += "You are Nahid AI Offline Vision Judge. You see a phone screenshot. Answer only in Bengali. Do not write Chinese. Do not invent details. Describe visible UI/text/icons/images briefly.\n";
     tokenize_prompt += "<|im_end|>\n";
     tokenize_prompt += "<|im_start|>user\n";
-    tokenize_prompt += "Screenshot: ";
+    tokenize_prompt += "Screenshot image: ";
     tokenize_prompt += marker;
     tokenize_prompt += "\n";
     tokenize_prompt += user_instruction;
@@ -326,7 +325,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
     auto decode_image_embd = [&](float *embd, size_t n_image_pos, bool want_logits) -> bool {
         // Important: mtmd image chunks can report many image tokens but fewer decoder positions.
-        // Stage 5P used n_tokens and generated gibberish; Stage 5Q uses n_pos for embedding decode.
+        // Stage 5R uses n_pos for image embedding decode.
         if (!embd || n_image_pos == 0 || n_embd <= 0) return false;
         llama_batch batch = p_llama_batch_init((int32_t)n_image_pos, n_embd, 1);
         batch.n_tokens = (int32_t)n_image_pos;
@@ -418,11 +417,11 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     llama_sampler_free(smpl);
 
     out << "GENERATION_STARTED ✅\n";
-    out << "GENERATION_MODE=GREEDY_CHAT_TEMPLATE\n";
+    out << "GENERATION_MODE=GREEDY_BENGALI_SCREEN_SUMMARY\n";
     out << "GENERATED_TOKENS=" << generated_count << "\n";
     out << "TEXT_OUTPUT=" << generated << "\n";
-    if (generated_count > 0) out << "STAGE5Q_CHAT_TEMPLATE_GREEDY_PROBE_OK ✅\n";
-    else out << "STAGE5Q_GENERATED_EMPTY ⚠️\n";
+    if (generated_count > 0) out << "STAGE5R_BENGALI_SCREEN_SUMMARY_PROBE_OK ✅\n";
+    else out << "STAGE5R_GENERATED_EMPTY ⚠️\n";
 
     p_mtmd_input_chunks_free(chunks);
     p_mtmd_bitmap_free(bitmap);
@@ -438,7 +437,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    LOGI("nativeRelease Stage 5Q called");
+    LOGI("nativeRelease Stage 5R called");
     g_main_model_path.clear();
     g_mmproj_path.clear();
     g_initialized = false;

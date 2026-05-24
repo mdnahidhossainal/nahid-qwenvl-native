@@ -97,5 +97,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5q_chat_template_greedy_probe_arm64_v8a
+          name: libnahid_qwenvl_stage5r_bengali_screen_summary_probe_arm64_v8a
           path: artifact
