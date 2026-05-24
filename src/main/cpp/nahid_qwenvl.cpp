@@ -34,23 +34,6 @@ static jstring to_jstring(JNIEnv * env, const std::string & s) {
     return env->NewStringUTF(s.c_str());
 }
 
-static std::string dl_probe(const char * lib, const std::vector<const char *> & symbols) {
-    std::ostringstream out;
-    void * h = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
-    if (!h) {
-        out << "LOAD_FAIL: " << lib << " :: " << (dlerror() ? dlerror() : "unknown") << "\n";
-        return out.str();
-    }
-    out << "LOAD_OK: " << lib << "\n";
-    for (const char * sym : symbols) {
-        dlerror();
-        void * p = dlsym(h, sym);
-        out << sym << ": " << (p ? "FOUND" : "NOT_FOUND") << "\n";
-    }
-    dlclose(h);
-    return out.str();
-}
-
 static std::string token_to_piece_safe(const llama_vocab * vocab, llama_token token) {
     std::string piece;
     piece.resize(64);
@@ -67,8 +50,9 @@ static std::string token_to_piece_safe(const llama_vocab * vocab, llama_token to
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv * env, jobject /*thiz*/) {
     std::ostringstream out;
-    out << "PONG_STAGE_5H_MULTIMODAL_LIBRARY_PROBE" << "\n";
-    out << "Purpose: verify mtmd/llava/clip multimodal shared library packaging before real image inference.";
+    out << "PONG_STAGE_5H_LITE_SAFE_MULTIMODAL_SYMBOL_PROBE" << "\n";
+    out << "llama.cpp linked: yes" << "\n";
+    out << "Purpose: keep Stage 5G stable text generation and safely probe mtmd symbols without calling image/mmproj APIs.";
     return to_jstring(env, out.str());
 }
 
@@ -83,7 +67,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     const std::string mmproj_path = jstr(env, mmprojPath);
 
     std::ostringstream out;
-    out << "INIT_STAGE_5H_MULTIMODAL_LIBRARY_PROBE" << "\n";
+    out << "INIT_STAGE_5H_LITE_SAFE_MULTIMODAL_SYMBOL_PROBE" << "\n";
     out << "MAIN=" << main_path << "\n";
     out << "MAIN_EXISTS=" << (file_exists(main_path) ? "true" : "false") << "\n";
     out << "MAIN_SIZE=" << file_size(main_path) << "\n";
@@ -91,33 +75,45 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     out << "MMPROJ_EXISTS=" << (file_exists(mmproj_path) ? "true" : "false") << "\n";
     out << "MMPROJ_SIZE=" << file_size(mmproj_path) << "\n\n";
 
-    out << "Core runtime probe:\n";
-    out << dl_probe("libllama.so", {"llama_backend_init", "llama_model_load_from_file", "llama_init_from_model"});
-    out << "\nMultimodal runtime probe:\n";
-    out << dl_probe("libmtmd.so", {"mtmd_context_params_default", "mtmd_init_from_file", "mtmd_free", "mtmd_encode"});
-    out << dl_probe("libllava.so", {"llava_validate_embed_size", "llava_image_embed_make_with_filename", "llava_image_embed_free"});
-    out << dl_probe("libclip.so", {"clip_model_load", "clip_free", "clip_image_load_from_file"});
-
-    out << "\nNow checking whether main GGUF still loads...\n";
     if (!file_exists(main_path)) {
-        out << "MODEL_LOAD_SKIPPED: main GGUF not found\n";
+        out << "MODEL_LOAD_SKIPPED: main GGUF file not found";
         return to_jstring(env, out.str());
     }
 
     llama_backend_init();
     llama_model_params params = llama_model_default_params();
     params.n_gpu_layers = 0;
+
     llama_model * model = llama_model_load_from_file(main_path.c_str(), params);
     if (model == nullptr) {
-        out << "MODEL_LOAD_FAILED ❌\n";
+        out << "MODEL_LOAD_FAILED ❌" << "\n";
         llama_backend_free();
         return to_jstring(env, out.str());
     }
-    out << "MODEL_LOAD_OK ✅\n";
+
+    out << "MODEL_LOAD_OK ✅" << "\n";
+
+    llama_context_params cparams = llama_context_default_params();
+    cparams.n_ctx = 512;
+    cparams.n_batch = 128;
+    cparams.n_threads = 4;
+    cparams.n_threads_batch = 4;
+
+    llama_context * ctx = llama_init_from_model(model, cparams);
+    if (ctx == nullptr) {
+        out << "CONTEXT_CREATE_FAILED ❌" << "\n";
+        llama_model_free(model);
+        llama_backend_free();
+        return to_jstring(env, out.str());
+    }
+
+    out << "CONTEXT_CREATE_OK ✅" << "\n";
+    out << "Stage 5H-Lite init probe passed. nativeAnalyze will run stable text generation plus safe mtmd symbol check." << "\n";
+    out << "NOTE: This still does not call mtmd/mmproj/image APIs; it only probes symbols safely.";
+
+    llama_free(ctx);
     llama_model_free(model);
     llama_backend_free();
-
-    out << "\nNOTE: Stage 5H only proves multimodal helper library availability/loadability. Real screenshot understanding is next.";
     return to_jstring(env, out.str());
 }
 
@@ -130,10 +126,13 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
     const std::string image_path = jstr(env, imagePath);
     const std::string prompt_text = jstr(env, prompt);
+
+    // The Kotlin bridge passes the same model paths to nativeInit only. Stage 5G needs a safe way to find the model.
+    // This is derived from the known app-private model location used in previous stages.
     const std::string model_path = "/storage/emulated/0/Android/data/com.nahidai.assistant/files/models/qwen2.5-vl-3b-ui-grounding.q4_k_s.gguf";
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5H_MULTIMODAL_LIBRARY_PROBE" << "\n";
+    out << "ANALYZE_STAGE_5H_LITE_SAFE_MULTIMODAL_SYMBOL_PROBE" << "\n";
     out << "IMAGE=" << image_path << "\n";
     out << "IMAGE_EXISTS=" << (file_exists(image_path) ? "true" : "false") << "\n";
     out << "IMAGE_SIZE=" << file_size(image_path) << "\n";
@@ -141,59 +140,56 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     out << "MODEL_EXISTS=" << (file_exists(model_path) ? "true" : "false") << "\n";
     out << "PROMPT_PREVIEW=" << prompt_text.substr(0, 180) << "\n\n";
 
-    out << "Multimodal library runtime check:\n";
-    out << dl_probe("libmtmd.so", {"mtmd_context_params_default", "mtmd_init_from_file", "mtmd_encode"});
-    out << dl_probe("libllava.so", {"llava_validate_embed_size", "llava_image_embed_make_with_filename"});
-    out << dl_probe("libclip.so", {"clip_model_load", "clip_image_load_from_file"});
-
-    out << "\nTEXT_GENERATION_SANITY_CHECK:\n";
     if (!file_exists(model_path)) {
-        out << "SKIPPED: model file not found\n";
+        out << "TEXT_GENERATION_SKIPPED: model file not found";
         return to_jstring(env, out.str());
     }
 
     llama_backend_init();
+
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
     llama_model * model = llama_model_load_from_file(model_path.c_str(), mparams);
     if (model == nullptr) {
-        out << "MODEL_LOAD_FAILED_IN_ANALYZE ❌\n";
+        out << "MODEL_LOAD_FAILED_IN_ANALYZE ❌" << "\n";
         llama_backend_free();
         return to_jstring(env, out.str());
     }
 
     llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = 384;
-    cparams.n_batch = 96;
+    cparams.n_ctx = 512;
+    cparams.n_batch = 128;
     cparams.n_threads = 4;
     cparams.n_threads_batch = 4;
     llama_context * ctx = llama_init_from_model(model, cparams);
     if (ctx == nullptr) {
-        out << "CONTEXT_CREATE_FAILED_IN_ANALYZE ❌\n";
+        out << "CONTEXT_CREATE_FAILED_IN_ANALYZE ❌" << "\n";
         llama_model_free(model);
         llama_backend_free();
         return to_jstring(env, out.str());
     }
 
     const llama_vocab * vocab = llama_model_get_vocab(model);
-    const std::string text_prompt = "<|im_start|>user\nSay OK in one word.<|im_end|>\n<|im_start|>assistant\n";
-    std::vector<llama_token> tokens(text_prompt.size() + 16);
+    const std::string text_prompt = "<|im_start|>user\nবাংলায় এক লাইনে বলো: তুমি কি কাজ করছ?<|im_end|>\n<|im_start|>assistant\n";
+
+    std::vector<llama_token> tokens(text_prompt.size() + 32);
     int n_tokens = llama_tokenize(vocab, text_prompt.c_str(), (int) text_prompt.size(), tokens.data(), (int) tokens.size(), true, true);
     if (n_tokens < 0) {
         tokens.resize((size_t)(-n_tokens));
         n_tokens = llama_tokenize(vocab, text_prompt.c_str(), (int) text_prompt.size(), tokens.data(), (int) tokens.size(), true, true);
     }
     if (n_tokens <= 0) {
-        out << "TOKENIZE_FAILED ❌\n";
+        out << "TOKENIZE_FAILED ❌" << "\n";
         llama_free(ctx);
         llama_model_free(model);
         llama_backend_free();
         return to_jstring(env, out.str());
     }
     tokens.resize((size_t)n_tokens);
+
     llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
     if (llama_decode(ctx, batch) != 0) {
-        out << "PROMPT_DECODE_FAILED ❌\n";
+        out << "PROMPT_DECODE_FAILED ❌" << "\n";
         llama_free(ctx);
         llama_model_free(model);
         llama_backend_free();
@@ -201,11 +197,14 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     }
 
     llama_sampler * smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.1f));
-    llama_sampler_chain_add(smpl, llama_sampler_init_dist(5678));
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.90f, 1));
+    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.35f));
+    llama_sampler_chain_add(smpl, llama_sampler_init_dist(1234));
+
     std::string generated;
     int generated_count = 0;
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 32; ++i) {
         llama_token new_token = llama_sampler_sample(smpl, ctx, -1);
         if (llama_vocab_is_eog(vocab, new_token)) break;
         generated += token_to_piece_safe(vocab, new_token);
@@ -213,19 +212,36 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
         if (llama_decode(ctx, next) != 0) break;
         generated_count++;
     }
+
     llama_sampler_free(smpl);
     llama_free(ctx);
     llama_model_free(model);
     llama_backend_free();
 
-    out << "TEXT_GENERATION_OK ✅\n";
+    out << "TEXT_GENERATION_OK ✅" << "\n";
     out << "GENERATED_TOKENS=" << generated_count << "\n";
     out << "TEXT_OUTPUT=" << generated << "\n\n";
-    out << "NOTE: Stage 5H is not real image inference yet. If libmtmd.so LOAD_OK appears, Stage 5I can attach image+mmproj.";
+
+    out << "MTMD_SYMBOL_PROBE_SAFE ✅" << "\n";
+    out << "RTLD_DEFAULT symbol checks only. No mtmd init/image/mmproj call is made in this stage." << "\n";
+    const char * syms[] = {
+            "mtmd_context_params_default",
+            "mtmd_init_from_file",
+            "mtmd_encode",
+            "mtmd_free",
+            "mtmd_input_text",
+            "mtmd_input_image"
+    };
+    for (const char * sym : syms) {
+        dlerror();
+        void * ptr = dlsym(RTLD_DEFAULT, sym);
+        out << sym << ": " << (ptr ? "FOUND" : "NOT_FOUND") << "\n";
+    }
+    out << "\nNOTE: Stage 5H-Lite keeps the Stage 5G stable path and only checks multimodal symbols. Real screenshot/mmproj vision is next after this passes without crash.";
     return to_jstring(env, out.str());
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    // Probe stage: no persistent model retained.
+    // Stage 5H-Lite does not keep a persistent model/context yet.
 }

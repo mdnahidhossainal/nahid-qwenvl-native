@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(nahid_qwenvl_stage5h LANGUAGES C CXX)
+project(nahid_qwenvl_stage5h_lite LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

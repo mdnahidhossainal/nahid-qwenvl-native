@@ -108,7 +108,7 @@ jobs:
           test -n "$GGML_CPU_SO"
           test -n "$MTMD_SO$LLAVA_SO$CLIP_SO"
 
-      - name: Configure Nahid JNI wrapper Stage 5H multimodal library probe
+      - name: Configure Nahid JNI wrapper Stage 5H-Lite safe multimodal symbol probe
         run: |
           cmake -S . -B build-nahid-wrapper \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
@@ -142,5 +142,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libnahid_qwenvl_stage5h_multimodal_library_probe_arm64_v8a
+          name: libnahid_qwenvl_stage5h_lite_safe_multimodal_symbol_probe_arm64_v8a
           path: artifact
