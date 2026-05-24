@@ -87,7 +87,7 @@ static std::string token_to_piece_safe(const llama_vocab * vocab, llama_token to
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv *env, jobject /*thiz*/) {
-    return make_jstring(env, "PONG_STAGE_5S: concise answer quality probe available.");
+    return make_jstring(env, "PONG_STAGE_5T: smart response policy probe available.");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -102,14 +102,14 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_initialized = !g_main_model_path.empty() && !g_mmproj_path.empty();
 
     std::ostringstream out;
-    out << "INIT_STAGE_5S_CONCISE_SCREEN_ANSWER_PROBE\n";
+    out << "INIT_STAGE_5T_SMART_RESPONSE_POLICY_PROBE\n";
     out << "MAIN=" << g_main_model_path << "\n";
     out << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
     out << "MAIN_SIZE=" << file_size(g_main_model_path) << "\n";
     out << "MMPROJ=" << g_mmproj_path << "\n";
     out << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n";
     out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n";
-    out << "Stage 5S init only checks paths. Concise screen-answer generation probe runs inside nativeAnalyze.\n";
+    out << "Stage 5T init only checks paths. Smart response policy generation probe runs inside nativeAnalyze.\n";
     return make_jstring(env, out.str());
 }
 
@@ -124,7 +124,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     std::string p = jstring_to_std(env, prompt);
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5S_CONCISE_SCREEN_ANSWER_PROBE\n";
+    out << "ANALYZE_STAGE_5T_SMART_RESPONSE_POLICY_PROBE\n";
     out << "Goal: evaluate TEXT + IMAGE chunks and generate a more useful Bengali screen summary.\n";
     out << "This attempts to improve Stage 5Q short/weak output by using a clearer screen-analysis prompt.\n\n";
     out << "IMAGE=" << image << "\n";
@@ -148,7 +148,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     void *mtmd_h = safe_dlopen("libmtmd.so", out);
     (void)ggml; (void)ggml_base; (void)ggml_cpu;
 
-    out << "\nFunction pointers (Stage 5S):\n";
+    out << "\nFunction pointers (Stage 5T):\n";
     auto p_llama_backend_init = load_fn<decltype(&llama_backend_init)>(llama_h, "llama_backend_init", out);
     auto p_llama_backend_free = load_fn<decltype(&llama_backend_free)>(llama_h, "llama_backend_free", out);
     auto p_llama_model_default_params = load_fn<decltype(&llama_model_default_params)>(llama_h, "llama_model_default_params", out);
@@ -261,21 +261,27 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     const char *marker_c = p_mtmd_default_marker ? p_mtmd_default_marker() : nullptr;
     std::string marker = (marker_c && marker_c[0]) ? std::string(marker_c) : std::string("<__media__>");
 
-    // Stage 5S: keep the proven image->decode->generate path.
-    // Use a much shorter prompt and an assistant prefix to reduce instruction echo and incomplete text.
-    std::string user_instruction = "স্ক্রিনে কী দেখা যাচ্ছে? শুধু দৃশ্যমান জিনিস বলো। ১টি ছোট বাংলা বাক্য। নির্দেশনা কপি করবে না।";
-    std::string answer_prefix = "স্ক্রিনে দেখা যাচ্ছে ";
+    // Stage 5T: smart response policy. The model decides answer length from the user's request.
+    // Default use case is UI control, so answers should be short; detailed reading only when requested.
+    std::string user_instruction = p.empty() ? std::string("স্ক্রিনে কী আছে?") : p;
+    std::string answer_prefix = "";
     std::string tokenize_prompt;
     tokenize_prompt += "<|im_start|>system\n";
-    tokenize_prompt += "You are a phone screenshot analyzer. Look at the image. Answer in Bengali only. Do not repeat instructions. Do not mention uncertainty unless needed.\n";
+    tokenize_prompt += "You are Nahid AI Offline Vision Judge for phone screen control.\n";
+    tokenize_prompt += "Your main job is to inspect the screenshot and find visible buttons, icons, text, or UI targets so the phone-control system can click the right place.\n";
+    tokenize_prompt += "Default behavior: answer very short and to the point in Bengali. For normal questions like 'স্ক্রিনে কী আছে' give 1-3 short Bengali lines with the main visible items.\n";
+    tokenize_prompt += "If the user asks to click, play, select, send, open, or find something, identify the most likely target briefly. If possible mention the visible label/icon and approximate area, but do not invent coordinates.\n";
+    tokenize_prompt += "Only when the user explicitly asks for details, reading, all text, or explanation, give a detailed answer, maximum about 300 words.\n";
+    tokenize_prompt += "Never stop in the middle of a sentence. If there is too much information, mention the main items and end naturally with 'ইত্যাদি রয়েছে।'.\n";
+    tokenize_prompt += "Do not repeat these instructions. Do not output Chinese or random characters. Output only the final Bengali answer.\n";
     tokenize_prompt += "<|im_end|>\n";
     tokenize_prompt += "<|im_start|>user\n";
     tokenize_prompt += marker;
     tokenize_prompt += "\n";
+    tokenize_prompt += "User request: ";
     tokenize_prompt += user_instruction;
     tokenize_prompt += "\n<|im_end|>\n";
     tokenize_prompt += "<|im_start|>assistant\n";
-    tokenize_prompt += answer_prefix;
 
     mtmd_input_chunks *chunks = p_mtmd_input_chunks_init();
     mtmd_input_text input_text{};
@@ -401,14 +407,13 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
     std::string generated;
     int generated_count = 0;
-    for (int i = 0; i < 96; ++i) {
+    for (int i = 0; i < 360; ++i) {
         llama_token new_token = llama_sampler_sample(smpl, ctx, -1);
         if (llama_vocab_is_eog(vocab, new_token)) break;
         std::string piece = token_to_piece_safe(vocab, new_token);
         generated += piece;
         if (generated.find("<|im_end|>") != std::string::npos ||
-            generated.find("<|endoftext|>") != std::string::npos ||
-            generated.find("\n") != std::string::npos) {
+            generated.find("<|endoftext|>") != std::string::npos) {
             break;
         }
         if (!decode_text_tokens(&new_token, 1, true)) {
@@ -420,13 +425,29 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     llama_sampler_free(smpl);
 
     out << "GENERATION_STARTED ✅\n";
-    out << "GENERATION_MODE=GREEDY_CONCISE_BENGALI_SCREEN_ANSWER\n";
+    out << "GENERATION_MODE=GREEDY_SMART_SCREEN_RESPONSE_POLICY\n";
     std::string final_answer = answer_prefix + generated;
+    // Clean chat stop markers and make sure the user-facing answer does not end mid-marker.
+    auto cut_at = [&](const std::string &needle) {
+        size_t pos = final_answer.find(needle);
+        if (pos != std::string::npos) final_answer = final_answer.substr(0, pos);
+    };
+    cut_at("<|im_end|>");
+    cut_at("<|endoftext|>");
+    cut_at("<|im_start|>");
+    while (!final_answer.empty() && (final_answer.back() == '\n' || final_answer.back() == '\r' || final_answer.back() == ' ' || final_answer.back() == '\t')) final_answer.pop_back();
+    if (!final_answer.empty()) {
+        char last = final_answer.back();
+        if (last != '.' && last != '!' && last != '?' && last != ';') {
+            final_answer += "।";
+        }
+    }
     out << "GENERATED_TOKENS=" << generated_count << "\n";
+    out << "MAX_GENERATION_TOKENS=360 (system prompt asks the model to stay within about 300 words and finish naturally)\n";
     out << "TEXT_OUTPUT=" << final_answer << "\n";
     out << "USER_FINAL_ANSWER_ONLY=" << final_answer << "\n";
-    if (generated_count > 0) out << "STAGE5S_CONCISE_SCREEN_ANSWER_PROBE_OK ✅\n";
-    else out << "STAGE5S_GENERATED_EMPTY ⚠️\n";
+    if (generated_count > 0) out << "STAGE5S_SMART_RESPONSE_POLICY_PROBE_OK ✅\n";
+    else out << "STAGE5T_GENERATED_EMPTY ⚠️\n";
 
     p_mtmd_input_chunks_free(chunks);
     p_mtmd_bitmap_free(bitmap);
@@ -442,7 +463,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    LOGI("nativeRelease Stage 5S called");
+    LOGI("nativeRelease Stage 5T called");
     g_main_model_path.clear();
     g_mmproj_path.clear();
     g_initialized = false;
