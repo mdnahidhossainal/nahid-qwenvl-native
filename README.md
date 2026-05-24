@@ -1,18 +1,10 @@
-# Nahid QwenVL Native Build Repo — Stage 5E-C
+# Nahid Qwen-VL Native Build Repo - Stage 5E-D
 
-Purpose:
-- Fix Stage 5E-B failure by disabling llama.cpp apps/tools/examples/tests.
-- Build only Android arm64-v8a shared libraries from llama.cpp.
-- Build the Nahid JNI wrapper `libnahid_qwenvl.so`.
-- Package all produced `.so` files into one artifact.
-
-This stage is still a shared-library/backend probe, not final Qwen-VL inference.
+This stage fixes Stage 5E-C by not building the default `all` target.
+It builds only llama.cpp library targets (`ggml`, `llama`) and avoids app/executable targets such as `llama-app` / `bin/llama` that caused `build-info.h` failures.
 
 Expected artifact:
-`libnahid_qwenvl_llamacpp_arm64_v8a_stage5e_c.zip`
-
-Expected inside:
 - `arm64-v8a/libnahid_qwenvl.so`
-- one or more llama.cpp / ggml `.so` files, such as `libllama.so` and `libggml*.so`
+- llama.cpp shared libraries such as `libllama.so`, `libggml*.so` if the library-only build succeeds.
 
-If this succeeds, the next stage will connect real model load and real screenshot + prompt inference.
+This is still a shared-library packaging/probe stage, not final Qwen2.5-VL inference.
