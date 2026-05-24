@@ -87,7 +87,7 @@ static std::string token_to_piece_safe(const llama_vocab * vocab, llama_token to
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativePing(JNIEnv *env, jobject /*thiz*/) {
-    return make_jstring(env, "PONG_STAGE_5R: Bengali screen-summary prompt probe available.");
+    return make_jstring(env, "PONG_STAGE_5S: concise answer quality probe available.");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -102,14 +102,14 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeInit(
     g_initialized = !g_main_model_path.empty() && !g_mmproj_path.empty();
 
     std::ostringstream out;
-    out << "INIT_STAGE_5R_BENGALI_SCREEN_SUMMARY_PROBE\n";
+    out << "INIT_STAGE_5S_CONCISE_SCREEN_ANSWER_PROBE\n";
     out << "MAIN=" << g_main_model_path << "\n";
     out << "MAIN_EXISTS=" << (file_exists(g_main_model_path) ? "true" : "false") << "\n";
     out << "MAIN_SIZE=" << file_size(g_main_model_path) << "\n";
     out << "MMPROJ=" << g_mmproj_path << "\n";
     out << "MMPROJ_EXISTS=" << (file_exists(g_mmproj_path) ? "true" : "false") << "\n";
     out << "MMPROJ_SIZE=" << file_size(g_mmproj_path) << "\n";
-    out << "Stage 5R init only checks paths. Bengali screen-summary generation probe runs inside nativeAnalyze.\n";
+    out << "Stage 5S init only checks paths. Concise screen-answer generation probe runs inside nativeAnalyze.\n";
     return make_jstring(env, out.str());
 }
 
@@ -124,7 +124,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     std::string p = jstring_to_std(env, prompt);
 
     std::ostringstream out;
-    out << "ANALYZE_STAGE_5R_BENGALI_SCREEN_SUMMARY_PROBE\n";
+    out << "ANALYZE_STAGE_5S_CONCISE_SCREEN_ANSWER_PROBE\n";
     out << "Goal: evaluate TEXT + IMAGE chunks and generate a more useful Bengali screen summary.\n";
     out << "This attempts to improve Stage 5Q short/weak output by using a clearer screen-analysis prompt.\n\n";
     out << "IMAGE=" << image << "\n";
@@ -148,7 +148,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     void *mtmd_h = safe_dlopen("libmtmd.so", out);
     (void)ggml; (void)ggml_base; (void)ggml_cpu;
 
-    out << "\nFunction pointers (Stage 5R):\n";
+    out << "\nFunction pointers (Stage 5S):\n";
     auto p_llama_backend_init = load_fn<decltype(&llama_backend_init)>(llama_h, "llama_backend_init", out);
     auto p_llama_backend_free = load_fn<decltype(&llama_backend_free)>(llama_h, "llama_backend_free", out);
     auto p_llama_model_default_params = load_fn<decltype(&llama_model_default_params)>(llama_h, "llama_model_default_params", out);
@@ -261,20 +261,21 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     const char *marker_c = p_mtmd_default_marker ? p_mtmd_default_marker() : nullptr;
     std::string marker = (marker_c && marker_c[0]) ? std::string(marker_c) : std::string("<__media__>");
 
-    // Stage 5R: use a clearer task prompt. Stage 5Q proved the full image->decode->generate path,
-    // but the answer was too weak. Keep the safe n_pos decode path and improve only the prompt.
-    std::string user_instruction = "এই ফোনের স্ক্রিনশটটি ভালোভাবে দেখে বাংলায় ১-২ বাক্যে বলো স্ক্রিনে কী দেখা যাচ্ছে। দৃশ্যমান অ্যাপ/পৃষ্ঠা, লেখা, বাটন, ছবি বা আইকন উল্লেখ করো। কিছু নিশ্চিত না হলে 'নিশ্চিত নই' বলো।";
+    // Stage 5S: keep the proven image->decode->generate path.
+    // Use a much shorter prompt and an assistant prefix to reduce instruction echo and incomplete text.
+    std::string user_instruction = "স্ক্রিনে কী দেখা যাচ্ছে? শুধু দৃশ্যমান জিনিস বলো। ১টি ছোট বাংলা বাক্য। নির্দেশনা কপি করবে না।";
+    std::string answer_prefix = "স্ক্রিনে দেখা যাচ্ছে ";
     std::string tokenize_prompt;
     tokenize_prompt += "<|im_start|>system\n";
-    tokenize_prompt += "You are Nahid AI Offline Vision Judge. You see a phone screenshot. Answer only in Bengali. Do not write Chinese. Do not invent details. Describe visible UI/text/icons/images briefly.\n";
+    tokenize_prompt += "You are a phone screenshot analyzer. Look at the image. Answer in Bengali only. Do not repeat instructions. Do not mention uncertainty unless needed.\n";
     tokenize_prompt += "<|im_end|>\n";
     tokenize_prompt += "<|im_start|>user\n";
-    tokenize_prompt += "Screenshot image: ";
     tokenize_prompt += marker;
     tokenize_prompt += "\n";
     tokenize_prompt += user_instruction;
     tokenize_prompt += "\n<|im_end|>\n";
     tokenize_prompt += "<|im_start|>assistant\n";
+    tokenize_prompt += answer_prefix;
 
     mtmd_input_chunks *chunks = p_mtmd_input_chunks_init();
     mtmd_input_text input_text{};
@@ -400,12 +401,14 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
     std::string generated;
     int generated_count = 0;
-    for (int i = 0; i < 72; ++i) {
+    for (int i = 0; i < 96; ++i) {
         llama_token new_token = llama_sampler_sample(smpl, ctx, -1);
         if (llama_vocab_is_eog(vocab, new_token)) break;
         std::string piece = token_to_piece_safe(vocab, new_token);
         generated += piece;
-        if (generated.find("<|im_end|>") != std::string::npos || generated.find("<|endoftext|>") != std::string::npos) {
+        if (generated.find("<|im_end|>") != std::string::npos ||
+            generated.find("<|endoftext|>") != std::string::npos ||
+            generated.find("\n") != std::string::npos) {
             break;
         }
         if (!decode_text_tokens(&new_token, 1, true)) {
@@ -417,11 +420,13 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
     llama_sampler_free(smpl);
 
     out << "GENERATION_STARTED ✅\n";
-    out << "GENERATION_MODE=GREEDY_BENGALI_SCREEN_SUMMARY\n";
+    out << "GENERATION_MODE=GREEDY_CONCISE_BENGALI_SCREEN_ANSWER\n";
+    std::string final_answer = answer_prefix + generated;
     out << "GENERATED_TOKENS=" << generated_count << "\n";
-    out << "TEXT_OUTPUT=" << generated << "\n";
-    if (generated_count > 0) out << "STAGE5R_BENGALI_SCREEN_SUMMARY_PROBE_OK ✅\n";
-    else out << "STAGE5R_GENERATED_EMPTY ⚠️\n";
+    out << "TEXT_OUTPUT=" << final_answer << "\n";
+    out << "USER_FINAL_ANSWER_ONLY=" << final_answer << "\n";
+    if (generated_count > 0) out << "STAGE5S_CONCISE_SCREEN_ANSWER_PROBE_OK ✅\n";
+    else out << "STAGE5S_GENERATED_EMPTY ⚠️\n";
 
     p_mtmd_input_chunks_free(chunks);
     p_mtmd_bitmap_free(bitmap);
@@ -437,7 +442,7 @@ Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeAnalyze(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nahidai_assistant_screen_QwenVlNativeBridge_nativeRelease(JNIEnv * /*env*/, jobject /*thiz*/) {
-    LOGI("nativeRelease Stage 5R called");
+    LOGI("nativeRelease Stage 5S called");
     g_main_model_path.clear();
     g_mmproj_path.clear();
     g_initialized = false;
